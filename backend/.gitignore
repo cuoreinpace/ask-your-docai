@@ -1,9 +1,7 @@
-node_modules
-dist
+__pycache__
+*.pyc
 .env
-*.log
-.DS_Store
-.vscode
-.idea
-coverage
-.nyc_output
+*.egg-info
+dist
+build
+.venv

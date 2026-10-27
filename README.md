@@ -8,11 +8,14 @@ Ask Your DocAI è una piattaforma sanitaria asincrona che consente ai pazienti d
 
 ## Architettura
 
-- **Backend**: Node.js + TypeScript + Express (modular monolith)
-- **Frontend**: React + TypeScript + Vite
-- **Database**: PostgreSQL
-- **Cache/Queue**: Redis + BullMQ
-- **Deployment**: Docker + Docker Compose
+- **Frontend**: Next.js 14 (React + TypeScript)
+- **Backend**: Python FastAPI
+- **Database**: PostgreSQL (Cloud SQL in produzione)
+- **Storage**: Google Cloud Storage (in produzione)
+- **Auth**: Google Cloud Identity Platform (OIDC + MFA)
+- **Deployment**: Google Cloud Run (backend), Vercel (frontend, opzionale)
+- **CI/CD**: GitHub Actions + Workload Identity Federation
+- **Region**: Europa - Milano (`europe-west8`)
 
 ## MVP — Scope
 
@@ -28,16 +31,16 @@ Ask Your DocAI è una piattaforma sanitaria asincrona che consente ai pazienti d
 ```bash
 # Backend
 cd backend
-npm install
-npm run dev
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8080
 
 # Frontend
 cd frontend
 npm install
 npm run dev
 
-# Database + Redis
-docker-compose up -d db redis
+# Database + Docker
+docker-compose up -d db
 ```
 
 ## API
@@ -46,14 +49,43 @@ docker-compose up -d db redis
 |--------|----------|-------------|
 | POST | `/v1/auth/register` | Registrazione utente |
 | POST | `/v1/auth/login` | Accesso |
+| GET | `/v1/auth/me` | Utente corrente |
 | POST | `/v1/cases` | Crea caso |
+| GET | `/v1/cases/:id` | Leggi caso |
 | POST | `/v1/cases/:id/submit` | Invia caso |
 | POST | `/v1/cases/:id/upload` | Inizializza upload |
+| POST | `/v1/cases/:id/upload/:uploadId/complete` | Completa upload |
 | POST | `/v1/cases/:id/messages` | Invia messaggio |
 | GET | `/v1/cases/:id/messages` | Leggi messaggi |
 | POST | `/v1/clinical/cases/:id/opinions` | Crea parere |
+| PUT | `/v1/clinical/opinions/:id` | Aggiorna parere |
+| POST | `/v1/clinical/opinions/:id/finalize` | Finalizza parere |
 | POST | `/v1/clinical/opinions/:id/sign` | Firma parere |
+| GET | `/v1/clinical/cases/:id/opinion` | Leggi parere |
+| GET | `/v1/opinions/:id/document` | Scarica documento firmato |
 | POST | `/v1/payments/authorization` | Preautorizza pagamento |
+| POST | `/v1/payments/webhooks/payment-provider` | Webhook PSP |
+
+## Deployment
+
+### Google Cloud (raccomandato)
+
+```bash
+# Backend su Cloud Run
+gcloud run deploy ask-your-docai-backend \
+  --region europe-west8 \
+  --source ./backend \
+  --set-env-vars DATABASE_URL=postgresql://...
+
+# Frontend su Vercel (opzionale)
+vercel deploy
+```
+
+### Docker Compose (sviluppo locale)
+
+```bash
+docker-compose up -d
+```
 
 ## Licenza
 
