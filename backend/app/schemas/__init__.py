@@ -1,3 +1,4 @@
+from datetime import date
 from enum import Enum
 from typing import Optional
 
@@ -59,7 +60,7 @@ class UserCreate(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8)
     role: UserRole
-    birth_date: Optional[str] = None
+    birth_date: Optional[date] = None
     country: Optional[str] = "ITA"
 
 

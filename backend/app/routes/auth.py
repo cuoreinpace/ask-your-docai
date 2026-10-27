@@ -3,7 +3,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import settings
-from app.core.database import fetchrow, execute
+from app.core.database import conn_execute, fetchrow, transaction
 from app.core.deps import get_current_user
 from app.schemas import AuthResponse, UserCreate, UserLogin
 from app.utils.helpers import db_now, generate_id, now_iso
@@ -31,21 +31,26 @@ async def register(payload: UserCreate):
     if existing is not None:
         raise HTTPException(status_code=409, detail="An account with this email already exists")
 
+    if payload.role.value == "PATIENT" and payload.birth_date is None:
+        raise HTTPException(status_code=422, detail="Birth date is required for patient accounts")
+
     user_id = generate_id("usr_")
     password_hash = bcrypt.hashpw(payload.password.encode(), bcrypt.gensalt()).decode()
 
-    await execute(
-        """INSERT INTO users (id, email, password_hash, role, email_verified, identity_level, created_at)
-           VALUES ($1, $2, $3, $4, false, 'BASIC', $5)""",
-        [user_id, payload.email, password_hash, payload.role.value, db_now()],
-    )
-
-    if payload.role.value == "PATIENT" and payload.birth_date:
-        await execute(
-            """INSERT INTO patient_profiles (user_id, birth_date, country, locale)
-               VALUES ($1, $2, $3, 'it-IT')""",
-            [user_id, payload.birth_date, payload.country or "ITA"],
+    async with transaction() as conn:
+        await conn_execute(
+            conn,
+            """INSERT INTO users (id, email, password_hash, role, email_verified, identity_level, created_at)
+               VALUES ($1, $2, $3, $4, false, 'BASIC', $5)""",
+            [user_id, payload.email, password_hash, payload.role.value, db_now()],
         )
+        if payload.role.value == "PATIENT" and payload.birth_date is not None:
+            await conn_execute(
+                conn,
+                """INSERT INTO patient_profiles (user_id, birth_date, country, locale)
+                   VALUES ($1, $2, $3, 'it-IT')""",
+                [user_id, payload.birth_date, payload.country or "ITA"],
+            )
 
     return AuthResponse(
         id=user_id,
