@@ -1,1640 +1,1991 @@
-# Blueprint tecnico e normativo per una piattaforma italiana di verifica medica delle ipotesi diagnostiche emerse da ChatGPT
-
-**Stato normativo e tecnologico: 27 ottobre 2026.**  
-**Assunzioni di progetto:** utenti maggiorenni residenti in Italia; servizio esclusivamente non urgente; il paziente porta una conversazione già avuta con ChatGPT oppure, in una fase futura, la piattaforma potrebbe integrare le API OpenAI; il medico effettua una revisione clinica indipendente asincrona e rilascia un parere firmato.
+# Blueprint tecnico operativo per la piattaforma di verifica medica delle diagnosi generate da ChatGPT
 
 ## Executive summary
 
-Il modello è realizzabile, ma la scelta architetturale determina in larga misura il profilo regolatorio.
+### Obiettivo del prodotto
 
-La configurazione che raccomando per l'MVP è deliberatamente semplice:
+La piattaforma deve realizzare un servizio molto preciso:
 
-> **il paziente utilizza ChatGPT per conto proprio; la piattaforma non interroga alcun LLM, non interpreta la conversazione, non genera diagnosi, non effettua triage automatico e non assegna priorità cliniche. Riceve il documento, lo mostra a un medico e consente al medico di acquisire ulteriori informazioni, formulare autonomamente il proprio giudizio e firmarlo.**
+> **Il paziente ha già consultato autonomamente ChatGPT. Carica la conversazione e le conclusioni ricevute. Un medico abilitato esamina il materiale, può chiedere informazioni aggiuntive e produce una valutazione clinica indipendente.**
 
-Questa separazione è importante perché il MDR qualifica il software in funzione della sua **destinazione d'uso**; la guida MDCG 2019-11 rev.1 del giugno 2025 chiarisce inoltre che la destinazione d'uso deriva anche dalle dichiarazioni promozionali e commerciali del produttore. Un software che si limita a trasferire, conservare e visualizzare informazioni sanitarie non diventa automaticamente un Medical Device Software, mentre un software che elabora o interpreta informazioni cliniche per uno scopo medico può diventarlo. La stessa guida fa specificamente l'esempio dei sistemi di telemedicina: la mera comunicazione/visualizzazione non costituisce necessariamente un dispositivo medico; i moduli che interpretano i dati o producono informazioni mediche possono invece esserlo. citeturn21view0turn21view1turn3view2
+Per il primo prodotto raccomando di **non integrare alcun modello AI nel backend**. Il backend non deve interrogare ChatGPT, estrarre automaticamente diagnosi, riordinare il differenziale, assegnare probabilità o suggerire al medico cosa convalidare. Deve acquisire la documentazione fornita dal paziente, conservarla in sicurezza, renderla disponibile al medico assegnato e registrare il giudizio professionale.
 
-Di conseguenza, **la piattaforma dovrebbe essere progettata come infrastruttura di comunicazione e documentazione di una prestazione professionale umana**, non come software che “verifica la diagnosi”. La prestazione sanitaria è svolta dal medico; il software consente di erogarla.
+Questa separazione è tecnicamente semplice e ha anche un'importante coerenza con il quadro privacy italiano. Nel Compendio del marzo 2024 dedicato proprio alle piattaforme che mettono in contatto pazienti e professionisti sanitari, il Garante distingue i trattamenti amministrativi effettuati dal gestore della piattaforma dai trattamenti sanitari per diagnosi e cura effettuati dal professionista. Per i dati sanitari trattati dal medico a fini di cura, il professionista opera come titolare; il gestore della piattaforma può svolgere per suo conto funzioni tecniche e amministrative, quali raccolta, archiviazione e conservazione della documentazione, in qualità di responsabile del trattamento. citeturn18view0turn19view1
 
-La formula commerciale che userei è quindi leggermente diversa da “convalida la diagnosi di ChatGPT”:
+### Architettura che raccomando
 
-> **Hai consultato ChatGPT per i tuoi sintomi? Fai valutare da un medico le ipotesi emerse.**  
-> Carica la conversazione e ricevi una valutazione clinica indipendente. Il medico potrà concordare, correggere le ipotesi, chiedere ulteriori informazioni oppure indicare che sono necessari visita o accertamenti.
+La mia scelta di riferimento per la prima versione di produzione sarebbe:
 
-Questa formulazione è anche clinicamente preferibile: evita di trasformare il medico in un “certificatore” dell'output AI e riduce automation bias e aspettative improprie. È coerente con l'art. 7 della legge italiana 132/2025, secondo cui l'AI può supportare prevenzione, diagnosi, cura e scelta terapeutica, ma la decisione rimane in capo agli esercenti la professione medica; la stessa norma riconosce il diritto dell'interessato a essere informato sull'impiego dell'AI e richiede affidabilità, verifica periodica e aggiornamento dei sistemi AI sanitari. citeturn20view0
+| Componente | Scelta raccomandata |
+|---|---|
+| Frontend | Next.js |
+| Hosting frontend | Vercel **opzionale**, oppure Cloud Run per ridurre il numero di fornitori |
+| Backend | Python FastAPI |
+| Packaging backend | Docker |
+| Hosting backend | Google Cloud Run, regione Milano `europe-west8` |
+| Database | Cloud SQL for PostgreSQL, Milano |
+| Documenti | Google Cloud Storage privato, Milano; successivamente eventuale dual-region italiana |
+| Identità | Google Cloud Identity Platform |
+| MFA | Obbligatoria per medici e amministratori, preferibilmente TOTP |
+| Secrets | Secret Manager |
+| CI/CD | GitHub Actions + Workload Identity Federation |
+| Container registry | Artifact Registry |
+| Audit | tabella applicativa append-only + logging infrastrutturale privo di dati clinici |
+| AI nel prodotto MVP | **Nessuna** |
 
-Il punto più delicato non è in realtà ChatGPT, ma **la natura della prestazione medica asincrona**. Le indicazioni nazionali sulla telemedicina riconoscono televisita, teleconsulto, teleconsulenza e telerefertazione come forme di prestazione sanitaria, ma il modello “paziente → caricamento documentale → medico → parere asincrono” non coincide perfettamente con il teleconsulto medico, che nella tassonomia nazionale è centrato sulla relazione fra professionisti, né deve essere automaticamente equiparato a una normale visita a distanza. Inoltre il Codice di deontologia medica richiede che l'impiego delle ICT rispetti le normali responsabilità della relazione medico-paziente e non consente di usare una relazione esclusivamente virtuale come sostituto indiscriminato della visita medica. citeturn17search3turn7search2turn10search3
+Cloud Run, Cloud SQL e Cloud Storage sono disponibili in regioni italiane; Cloud Run e Cloud SQL sono disponibili a Milano, mentre Cloud Storage supporta sia Milano sia Torino e consente configurazioni dual-region. citeturn16search2turn22search1turn22search3
 
-Per questo il prodotto deve permettere al medico di concludere:
+La principale ragione per scegliere questa architettura non è che Google Cloud sia l'unica soluzione possibile. È che consente di tenere **API, database e documenti sanitari nello stesso ecosistema e nella stessa area geografica**, con un backend containerizzato ma senza dover amministrare server o Kubernetes. Cloud Run esegue direttamente immagini container e gestisce automaticamente l'infrastruttura di esecuzione. citeturn15search17turn16search2
 
-**concordo**, **concordo parzialmente**, **non concordo**, **informazioni insufficienti**, **necessaria visita/esame obiettivo**, **necessari accertamenti**, **necessaria valutazione urgente**.
+### La risposta definitiva alla questione Docker
 
-Non deve mai obbligarlo a “confermare” qualcosa.
+Per il team deve essere chiarissimo:
 
-Sul piano privacy, la piattaforma tratta sistematicamente dati sanitari e pazienti: il GDPR è quindi centrale. Il Garante italiano, nel proprio compendio specificamente dedicato alle piattaforme che mettono in contatto pazienti e professionisti sanitari, considera la DPIA particolarmente rilevante e, per le piattaforme del tipo descritto, richiama espressamente i fattori che ne rendono necessario lo svolgimento: dati sanitari, interessati vulnerabili, nuove tecnologie e possibile trattamento su larga scala. Il Garante insiste inoltre sulla corretta attribuzione dei ruoli di titolare/responsabile e sull'adozione di misure di sicurezza adeguate. citeturn6view0turn6view1turn5view0
+> **Docker contiene il backend. Cloud Run esegue quel container. PostgreSQL e i documenti dei pazienti non vengono messi dentro Docker.**
 
-La scelta consigliata per il primo rilascio è quindi:
+In questo progetto Docker serve a costruire una versione standard e riproducibile del backend:
 
-| Decisione | MVP raccomandato | Motivo |
-|---|---|---|
-| ChatGPT | Utilizzato autonomamente dal paziente, fuori dalla piattaforma | Separa nettamente AI e servizio sanitario |
-| Importazione | Upload manuale PDF/TXT/immagini o copia-incolla | Nessun accesso alle credenziali OpenAI |
-| Interpretazione della chat | Nessuna | Riduce fortemente rischio MDSW |
-| Riassunto AI | No | Potrebbe produrre informazione clinicamente rilevante |
-| Red-flag NLP | No | È una funzione di triage clinico |
-| Prioritizzazione automatica | No | Potrebbe configurare decision support |
-| Safety gate | Informazione statica + auto-identificazione paziente + revisione umana | Non interpreta automaticamente i sintomi |
-| Decisione clinica | Solo medico | Coerente con legge 132/2025 |
-| Referto/parere | Redatto dal medico e firmato digitalmente | Tracciabilità e responsabilità |
-| Assistenza in emergenza | Esplicitamente esclusa | Un servizio asincrono non deve essere utilizzato come pronto soccorso |
-| API OpenAI | Post-MVP, dopo nuova valutazione MDR/AI Act/DPIA | Aumenta sostanzialmente il perimetro regolatorio |
+```text
+Codice FastAPI
++ Python
++ librerie
++ configurazione runtime
+        ↓
+    Docker image
+        ↓
+   Cloud Run
+```
 
-La **priorità assoluta prima di scrivere funzionalità cliniche** dovrebbe essere la produzione di tre documenti: un *MDR qualification memo* con destinazione d'uso e feature-by-feature assessment; un parere sull'inquadramento regionale della prestazione sanitaria; una DPIA iniziale con matrice dei ruoli privacy. Il fatto che l'LLM generalista possa dimostrare performance diagnostiche superiori ai medici in alcuni benchmark non cambia questo quadro: studi recenti hanno effettivamente mostrato prestazioni standalone degli LLM superiori a gruppi di medici in vignette diagnostiche, ma gli stessi lavori sottolineano la distanza fra benchmark, acquisizione dell'anamnesi e pratica clinica reale. citeturn26search0turn26search29turn26search2
+I dati persistenti stanno invece qui:
 
-**Destinazione d'uso software che proporrei di cristallizzare nei documenti di prodotto:**
+```text
+Cloud SQL PostgreSQL     ← dati strutturati
+Cloud Storage            ← PDF, immagini, conversazioni, documenti
+```
 
-> *La piattaforma consente a pazienti adulti di trasmettere in modo sicuro documenti e informazioni a un professionista medico, consente al professionista di visualizzare tali informazioni, comunicare con il paziente, documentare autonomamente la propria valutazione professionale e rilasciare un parere firmato. Il software non analizza, interpreta o classifica informazioni cliniche, non genera diagnosi o raccomandazioni terapeutiche, non valuta l'urgenza clinica e non sostituisce la decisione del medico.*
+Docker Compose è utile localmente per far partire API e PostgreSQL con un solo file; Docker documenta Compose precisamente come strumento per definire ed eseguire applicazioni multi-container mediante una configurazione YAML. citeturn0search6
 
-Questa frase dovrebbe diventare un vero e proprio **“MDR firewall”**: requisiti software, marketing, UX e roadmap devono rimanere coerenti con essa. La guida MDCG è esplicita nel collegare la qualificazione del software alla destinazione d'uso dichiarata e alle funzionalità che perseguono uno scopo medico. citeturn21view0turn21view1
+### Vercel senza Docker è un'alternativa reale
 
-## Quadro normativo, MDR e classificazione del servizio
+È possibile costruire anche:
 
-**MDR e Medical Device Software.** Il Regolamento (UE) 2017/745 include espressamente il software nella definizione di dispositivo medico quando il produttore lo destina, tra l'altro, alla diagnosi, prevenzione, monitoraggio, previsione, prognosi o trattamento di una malattia. La MDCG 2019-11 rev.1 sottolinea che non tutto il software utilizzato in sanità è MDSW: la semplice ricerca, conservazione, comunicazione o visualizzazione di informazioni non è sufficiente; diventa decisivo se il software elabora o interpreta dati per perseguire un fine medico. citeturn21view0turn21view1
+```text
+Next.js
+  ↓
+Vercel
+  ↓
+Route Handlers / Vercel Functions
+  ↓
+PostgreSQL + Object Storage
+```
 
-Se invece introducessimo una funzione che prende la conversazione del paziente e produce una diagnosi, un ranking delle diagnosi, una raccomandazione clinica o una classificazione dell'urgenza, saremmo molto più vicini alla Regola 11 del MDR. Essa colloca normalmente in classe IIa il software che fornisce informazioni utilizzate per decisioni diagnostiche o terapeutiche, con passaggio a IIb o III quando le conseguenze delle decisioni possono essere rispettivamente gravi o fatali/irreversibili. citeturn21view2turn3view1
+e quindi **non usare Docker in produzione**.
 
-La seguente matrice dovrebbe essere utilizzata dal Product Manager e dal Regulatory Owner durante ogni refinement di prodotto:
+Questa architettura è perfettamente plausibile per un MVP prevalentemente CRUD. Tuttavia le Vercel Functions hanno un limite di **4,5 MB per request/response body**, per cui gli allegati clinici devono essere caricati direttamente nell'object storage anziché passare attraverso la function. citeturn21search1turn21search10
 
-| Funzione | MVP | Valutazione MDR preliminare | Decisione |
-|---|---:|---|---|
-| Upload della conversazione | Sì | Trasmissione/documentazione | Ammessa |
-| Visualizzazione PDF/TXT | Sì | Trasmissione/display | Ammessa |
-| Messaggistica paziente-medico | Sì | Comunicazione | Ammessa |
-| Pagamento/prenotazione | Sì | Amministrativa | Ammessa |
-| Firma del parere | Sì | Documentazione della decisione umana | Ammessa |
-| Form strutturato compilato dal paziente | Sì | Raccolta dati senza interpretazione | Ammessa |
-| Tag dell'urgenza scelto manualmente dal medico | Sì | Decisione umana | Ammessa |
-| Ordinamento della coda per orario di arrivo | Sì | Amministrativo | Ammessa |
-| Estrazione automatica di sintomi con NLP | No | Potenziale elaborazione medica | Regulatory review |
-| Riassunto AI della chat per il medico | No | Può influenzare decisione clinica | Regulatory review |
-| Ranking automatico delle diagnosi | No | Diagnostico | Probabile MDSW |
-| Calcolo di probabilità diagnostica | No | Diagnostico | Probabile MDSW |
-| Rilevamento automatico di red flags | No | Triage/decision support | Probabile MDSW |
-| Priorità automatica “urgente/non urgente” | No | Triage | Probabile MDSW |
-| Suggerimenti di esami | No | Decision support | Probabile MDSW |
-| Bozza AI del parere medico | No | Può influenzare decisione | Da riesaminare prima dell'introduzione |
+Una correzione importante rispetto a quanto ti avevo detto precedentemente: nel 2026 Vercel **può anche eseguire container OCI costruiti da Dockerfile** mediante il nuovo Container Runtime. Al 27 ottobre 2026, però, il servizio risulta ancora in **Beta**, quindi non lo sceglierei come runtime primario del backend sanitario senza una valutazione specifica del rischio operativo. citeturn15search0turn15search8
 
-Le ultime righe sono **valutazioni prudenziali**, non classificazioni giuridiche definitive; la qualificazione dipende da destinazione d'uso, claims e conseguenze cliniche. Tuttavia, la logica della MDCG è sufficientemente chiara da rendere controproducente aggiungere queste funzioni nel primo rilascio. citeturn21view1turn21view2
+### Regole architetturali non negoziabili
 
-Particolarmente importante: **il fatto che ChatGPT sia un modello generalista non protegge un tuo prodotto dal MDR**. Se tu prendi un modello generalista e lo incorpori in un prodotto con finalità diagnostica, la qualificazione riguarda il prodotto risultante e la sua destinazione d'uso. La MDCG afferma inoltre che la qualificazione non dipende da dove il software risiede — cloud, app o altra piattaforma — ma dalla sua finalità. citeturn21view0
+Nel blueprint userò tre livelli:
 
-**AI Act.** L'AI Act considera ad alto rischio, tra le altre categorie, i sistemi AI che costituiscono un prodotto o componente di sicurezza soggetto alla normativa UE di prodotto quando è richiesta una valutazione di conformità di terza parte; la Commissione utilizza proprio i dispositivi medici fra gli esempi. Dopo le modifiche introdotte nel 2026 dal Digital Omnibus sull'AI, il calendario di applicazione è stato modificato: secondo l'attuale FAQ della Commissione, per i sistemi ad alto rischio incorporati in prodotti regolamentati ai sensi dell'art. 6(1), inclusi i dispositivi medici, la scadenza di riferimento è ora il **2 agosto 2028**, mentre per altre categorie high-risk è indicato il 2 dicembre 2027. citeturn14search0turn14search1
+**MUST** = requisito che blocca il rilascio; **SHOULD** = requisito fortemente raccomandato; **MAY** = opzionale.
 
-Questo produce due scenari radicalmente differenti:
+Per la prima produzione considero MUST: separazione degli ambienti, MFA per medici/admin, cifratura, autorizzazione a livello di singola risorsa, audit trail, backup testati, nessun dato sanitario nei log applicativi, object storage non pubblico, database non esposto direttamente a Internet, gestione formale dei fornitori/sub-responsabili e completamento della DPIA prima del go-live. Il GDPR richiede misure tecniche e organizzative commisurate al rischio, mentre il Garante dedica esplicitamente alle piattaforme sanitarie sezioni su DPIA, privacy by design e sicurezza. citeturn17search1turn18view0turn20view0
 
-| Architettura | MDR | AI Act |
-|---|---|---|
-| Nessuna AI nella piattaforma; solo documento portato dal paziente | Solido argomento per non-MDSW, da formalizzare | La piattaforma non sta essa stessa mettendo in servizio un sistema AI clinico |
-| API usata solo per task strettamente non clinici | Analisi caso per caso | Obblighi AI applicabili in funzione del ruolo e della funzione |
-| API che riassume anamnesi per il medico | Rischio MDSW significativo | Se MDSW soggetto a notified body, possibile high-risk AI |
-| API che genera diagnosi/triage | Probabile MDSW | Forte probabilità di high-risk AI se ricorrono le condizioni dell'art. 6(1) |
-| AI che emette direttamente conclusione al paziente | Massimo rischio regolatorio | High-risk/product compliance + forte esposizione clinica |
 
-Per l'MVP, **non dovrebbe esserci un “AI system” interno al percorso clinico**. La conversazione AI è un documento fornito dal paziente, come potrebbe esserlo un referto o un elenco di ipotesi scritto altrove.
+## Architettura applicativa e flussi di dati
 
-La legge italiana 132/2025 rafforza la centralità della supervisione medica: l'art. 7 riconosce l'uso dell'AI per prevenzione, diagnosi e cura, attribuisce all'interessato il diritto a essere informato e stabilisce che la decisione resta sempre rimessa agli esercenti la professione medica; dispone anche che i sistemi AI sanitari e i dati utilizzati siano affidabili, periodicamente verificati e aggiornati. citeturn20view0
+### Architettura raccomandata
 
-Se in futuro la piattaforma integrasse un LLM, l'informativa al paziente sul suo impiego dovrebbe quindi essere distinta sia dalla privacy policy sia dal consenso alla prestazione: **“stiamo usando AI” non dovrebbe essere nascosto nelle condizioni generali**.
+La configurazione che darei al team è questa:
 
-**Telemedicina e natura della prestazione.** L'Accordo Stato-Regioni 215/CSR del 17 dicembre 2020 costituisce il riferimento unitario nazionale per televisita, teleconsulto medico, teleconsulenza, teleassistenza e telerefertazione, con attuazione demandata alle Regioni. Il Ministero ha successivamente emanato le linee guida sui requisiti funzionali e livelli di servizio dei sistemi di telemedicina. citeturn17search3turn7search2
+```mermaid
+flowchart TB
+    P[Paziente]
+    D[Medico]
+    A[Amministratore]
 
-Non denominerei quindi automaticamente il servizio “teleconsulto”: nel linguaggio istituzionale il teleconsulto ha una qualificazione propria. Nel contratto e nella UX utilizzerei **“parere medico di revisione clinica a distanza”** o **“valutazione medica documentale a distanza”**, finché il legale sanitario non abbia definito esattamente la classificazione applicabile.
+    FE[Next.js Frontend<br/>Vercel opzionale]
+    IDP[Google Identity Platform<br/>OIDC + MFA]
+    API[FastAPI Backend<br/>Docker / Cloud Run<br/>Milano]
+    DB[(Cloud SQL PostgreSQL<br/>Milano)]
+    OBJ[(Cloud Storage privato<br/>Milano / Italia)]
+    AUD[(Audit Events)]
+    LOG[Cloud Logging<br/>senza PHI]
+    SEC[Secret Manager]
+    CI[GitHub Actions]
+    REG[Container Registry]
 
-La piattaforma deve inoltre poter convertire il caso in una diversa modalità quando il medico ritiene indispensabile l'interazione diretta. Il Codice di deontologia FNOMCeO disciplina l'impiego delle tecnologie informatiche e richiede che non venga sostituita indiscriminatamente la relazione medica con una relazione esclusivamente virtuale. citeturn10search0turn10search3
+    P --> FE
+    D --> FE
+    A --> FE
 
-Questo significa che il workflow corretto non è:
+    FE --> IDP
+    P -->|API HTTPS diretta| API
+    D -->|API HTTPS diretta| API
+    A -->|API HTTPS diretta| API
 
-`ChatGPT → medico firma → diagnosi certificata`
+    API --> DB
+    API --> AUD
+    API --> LOG
+    API --> SEC
+    API -->|genera URL firmati| OBJ
+
+    P -->|upload diretto con URL firmato| OBJ
+    D -->|download autorizzato con URL temporaneo| OBJ
+
+    CI --> REG
+    REG --> API
+```
+
+Nel modello con Vercel, il frontend dovrebbe funzionare prevalentemente come **application shell**: le schermate vengono distribuite da Vercel, ma i dati clinici vengono richiesti dal browser direttamente all'API sanitaria su Cloud Run. In altre parole, una pagina come `/doctor/cases/123` può essere servita da Vercel, ma il contenuto sanitario del caso `123` viene recuperato nel browser dopo autenticazione, non renderizzato lato server da una Vercel Function.
+
+Questo riduce il numero di componenti che ricevono effettivamente il contenuto sanitario. È una scelta architetturale di minimizzazione coerente con i principi di privacy by design richiamati dal Garante e dall'articolo 25 GDPR. citeturn19view2turn20view0
+
+Per il frontend Vercel dispone di regioni compute europee; se si introducono Route Handlers o altre Functions che trattano dati sensibili, la regione deve essere configurata deliberatamente e posta vicino al datastore, invece di affidarsi implicitamente alle impostazioni di default. La stessa documentazione Vercel raccomanda di collocare compute e database vicini tra loro. citeturn21search0turn15search32
+
+### Variante completamente Google Cloud
+
+Per minimizzare ulteriormente fornitori e flussi, Next.js può essere containerizzato e ospitato anch'esso su Cloud Run:
+
+```mermaid
+flowchart LR
+    U[Browser]
+    WEB[Next.js<br/>Cloud Run]
+    API[FastAPI<br/>Cloud Run]
+    AUTH[Identity Platform]
+    DB[(Cloud SQL)]
+    STORE[(Cloud Storage)]
+
+    U --> WEB
+    U --> AUTH
+    WEB --> API
+    U -->|API autenticata| API
+    API --> DB
+    API --> STORE
+```
+
+Questa configurazione rinuncia a parte della comodità specifica di Vercel per Next.js, ma permette di gestire praticamente tutto il perimetro applicativo attraverso un unico cloud provider. È la variante che sceglierei qualora la priorità fosse **governance e riduzione del numero di responsabili/sub-responsabili** anziché massima comodità frontend. L'EDPB sottolinea che il titolare deve conoscere e governare i propri responsabili e sub-responsabili e verificarne nel tempo le garanzie, quindi ridurre la catena dei fornitori ha un valore operativo reale. citeturn17search2turn17search10
+
+### Variante serverless Vercel
+
+L'alternativa più semplice per gli sviluppatori sarebbe:
+
+```mermaid
+flowchart TB
+    U[Paziente / Medico]
+    NX[Next.js su Vercel]
+    FN[Vercel Functions<br/>Route Handlers]
+    AUTH[Identity Provider]
+    PG[(PostgreSQL gestito UE)]
+    OBJ[(Object Storage UE)]
+
+    U --> NX
+    NX --> AUTH
+    NX --> FN
+    FN --> PG
+    FN -->|presigned upload URL| OBJ
+    U -->|upload diretto| OBJ
+```
+
+Next.js Route Handlers consentono di implementare normali endpoint HTTP direttamente nell'applicazione Next.js, quindi per un prodotto piccolo possono fungere da backend-for-frontend o persino da backend applicativo. citeturn12search1turn12search28
+
+Il limite più evidente per il nostro caso è l'upload: una conversazione testuale raramente sarà enorme, ma referti, PDF e immagini possono superare facilmente il limite applicativo. Vercel impone 4,5 MB al body di una Function e raccomanda l'upload diretto dal client per file più grandi. citeturn21search1turn21search13
+
+La conseguenza è importante: **anche scegliendo serverless, l'upload diretto verso object storage è l'architettura corretta**.
+
+### Flusso di caricamento consigliato
+
+Il frontend non deve fare:
+
+```text
+Browser → backend → PDF → storage
+```
 
 ma:
 
-`documentazione del paziente → valutazione professionale → richiesta di integrazione/visita se necessaria → conclusione che può anche essere “non determinabile a distanza”`.
+```text
+Browser
+   │
+   │ 1. POST /uploads/presign
+   ▼
+Backend
+   │
+   │ 2. URL temporaneo
+   ▼
+Browser
+   │
+   │ 3. Upload PDF diretto
+   ▼
+Object Storage
+   │
+   │ 4. object_key + hash
+   ▼
+Backend / Database
+```
 
-**Regolamentazione regionale.** È uno dei possibili critical path del progetto. L'Accordo nazionale demanda esplicitamente alle Regioni l'implementazione dei servizi di telemedicina. Le regole regionali sulle strutture sanitarie e sugli studi professionali non sono uniformi. citeturn17search3
+L'API non riceve quindi il file binario, ma soltanto i metadati e l'identificativo dell'oggetto. Google Cloud Storage supporta URL firmati che concedono accesso temporaneo a uno specifico oggetto, rendendo questo pattern adatto al caricamento e download controllato. citeturn6search23
 
-L'Emilia-Romagna, per esempio, dichiara espressamente che fra gli oggetti dell'autorizzazione sanitaria vi sono anche le sedi da cui vengono erogate prestazioni in telemedicina; la Regione disciplina inoltre separatamente autorizzazione e comunicazione per gli studi professionali. citeturn24search0turn24search17 Nel Lazio, il quadro autorizzatorio delle strutture sanitarie deriva dalla normativa regionale e la Regione ha ulteriormente aggiornato nel 2026 le procedure relative alle comunicazioni delle attività professionali mediche. citeturn24search16 La Lombardia disciplina il sistema sanitario regionale con la L.R. 33/2009 e successive modifiche, con norme specifiche anche sull'impiego della telemedicina in diversi setting; l'esatto titolo necessario per questo specifico modello va verificato con la normativa attuativa e, opportunamente, con l'ATS competente prima della scelta della sede operativa. citeturn24search1
+Il backend deve convalidare prima di rilasciare l'URL: identità dell'utente, ownership del caso, MIME type ammesso, dimensione massima e finalità dell'upload. Dopo il caricamento deve verificare almeno dimensione, hash e stato di sicurezza prima di rendere il documento visibile al medico.
 
-Per una piattaforma nazionale predisporrei quindi un **Regional Compliance Matrix** con almeno:
+### Confine funzionale dell'MVP
 
-| Campo | Valore da determinare |
-|---|---|
-| Regione della sede dell'erogatore sanitario | Da scegliere prima del go-live |
-| Forma dell'erogatore | Studio / organizzazione sanitaria / altra forma ammessa |
-| Autorizzazione sanitaria necessaria | Parere formale regionale |
-| Comunicazione/SCIA necessaria | Parere formale regionale |
-| Requisiti del direttore sanitario | Se applicabili |
-| Requisiti strutturali | Se applicabili al servizio remoto |
-| Requisiti organizzativi telemedicina | Da mappare |
-| Conservazione documentazione | Da mappare |
-| Erogazione a pazienti di altre Regioni | Da validare |
-| Professionisti operanti da altra Regione | Da validare |
+Il backend **MUST NOT**:
 
-Non lancerei “in tutta Italia” prima di aver chiuso questo memo.
+```text
+- chiamare ChatGPT per reinterpretare il caso
+- generare una propria diagnosi differenziale
+- assegnare probabilità alle diagnosi
+- raccomandare automaticamente un trattamento
+- decidere automaticamente che il caso è urgente/non urgente
+- suggerire al medico "conferma questa diagnosi"
+```
 
-**Responsabilità e assicurazione.** La revisione deve essere una prestazione professionale reale, non una firma automatica. La responsabilità sanitaria e gli obblighi assicurativi devono essere mappati alla luce della legge 24/2017 e del relativo quadro attuativo, incluso il D.M. 232/2023 sui requisiti delle coperture assicurative. citeturn9search1turn25search0
+Può invece:
 
-Il contratto con i medici deve specificare almeno: autonomia professionale, obbligo di non convalidare conclusioni insufficientemente supportate, gestione degli eventi urgenti, documentazione, tempi di risposta, obbligo assicurativo, uso esclusivo degli strumenti approvati, divieto di trasferire dati sanitari verso servizi personali non autorizzati e gestione degli incidenti.
+```text
+- ricevere il testo o il PDF fornito dal paziente
+- conservarlo
+- verificare che il file sia tecnicamente valido
+- assegnare il caso a un medico
+- presentare la conversazione originale
+- raccogliere richieste di integrazione
+- registrare il giudizio del medico
+- produrre un documento finale
+- inviare notifiche prive di informazioni cliniche
+```
 
-**Firma.** Una firma elettronica qualificata gode, ai sensi di eIDAS, dell'effetto giuridico equivalente alla firma autografa. Per il parere medico raccomanderei quindi una **firma remota qualificata PAdES tramite prestatore qualificato**, con eventuale marca temporale e conservazione degli artefatti di verifica; non perché ogni singolo parere privato debba necessariamente essere firmato in questo modo, ma perché fornisce una prova particolarmente robusta di autore, integrità e momento della sottoscrizione. citeturn9search2turn9search7
+Questo confine deve essere formalizzato in un **Architecture Decision Record**, perché una futura funzione che interpreti automaticamente il contenuto clinico modificherebbe non solo il software ma anche il profilo regolatorio e privacy del trattamento. Il Garante distingue espressamente il servizio tecnico-amministrativo della piattaforma dal trattamento effettuato dal professionista per finalità di diagnosi e cura. citeturn18view0turn19view1
 
-## Prodotto, UX e operazioni cliniche
 
-Il principio UX centrale è che il paziente deve capire la distinzione tra **output AI** e **valutazione medica** prima di pagare.
+## Docker, serverless e confronto degli hosting
 
-La home page dovrebbe quindi esplicitare:
+### Cosa deve fare Docker nel nostro progetto
 
-**“Il servizio non certifica automaticamente le risposte di ChatGPT. Un medico effettua una valutazione indipendente e può concordare, correggere o non poter confermare le ipotesi.”**
+La definizione operativa per gli sviluppatori è:
 
-Questo è importante anche perché OpenAI stessa, nel prodotto ChatGPT Health attualmente distribuito in alcuni mercati, descrive la funzione come strumento di supporto e comprensione e non come sostituto della diagnosi o del trattamento medico. citeturn23search10
+> **Docker è il formato con cui confezioniamo il backend FastAPI in modo che la stessa applicazione testata localmente possa essere eseguita in staging e produzione.**
 
-**Flusso utente proposto:**
+Non è:
+
+```text
+Docker ≠ server
+Docker ≠ database
+Docker ≠ storage
+Docker ≠ cloud
+Docker ≠ sistema di autenticazione
+```
+
+Il ciclo dovrebbe essere:
 
 ```mermaid
-flowchart TD
-    A[Landing page] --> B[Avviso: servizio non di emergenza]
-    B --> C{Il paziente dichiara<br/>di cercare assistenza urgente?}
+flowchart LR
+    CODE[Codice]
+    TEST[Test automatici]
+    IMG[Docker image]
+    REG[Container Registry]
+    STG[Staging]
+    PROD[Production]
 
-    C -->|Sì| D[Interrompi il percorso<br/>Mostra istruzioni per assistenza urgente]
-    C -->|No| E[Registrazione / Login]
-
-    E --> F[Verifica età, residenza e identità]
-    F --> G[Descrizione del problema<br/>scritta dal paziente]
-    G --> H[Upload conversazione ChatGPT]
-    H --> I[Eventuali documenti clinici di supporto]
-
-    I --> J[Informativa servizio + privacy + consenso/accettazioni]
-    J --> K[Autorizzazione pagamento]
-    K --> L[Invio del caso]
-
-    L --> M[Revisione umana di ammissibilità e sicurezza]
-    M -->|Fuori scope| N[Rifiuto / rimborso o rilascio preautorizzazione]
-    M -->|Possibile urgenza| O[Escalation clinica umana]
-    M -->|Ammesso| P[Assegnazione al medico]
-
-    P --> Q[Valutazione indipendente]
-    Q --> R{Informazioni sufficienti?}
-
-    R -->|No| S[Messaggio sicuro al paziente]
-    S --> T[Risposta paziente]
-    T --> Q
-
-    R -->|Sì| U[Redazione parere]
-    U --> V[Firma elettronica qualificata]
-    V --> W[Notifica generica al paziente]
-    W --> X[Visualizzazione e download]
-    X --> Y[Chiusura / eventuale addendum]
+    CODE --> TEST
+    TEST --> IMG
+    IMG --> REG
+    REG --> STG
+    STG --> PROD
 ```
 
-**Pagine frontend e responsabilità:**
+Docker Compose consente invece al programmatore di avviare localmente più servizi descritti in un singolo YAML. Docker documenta inoltre l'uso di Compose anche su singoli host di produzione, ma per il nostro caso non utilizzerei questo approccio: in produzione database e storage devono essere servizi gestiti indipendentemente dal ciclo di vita dei container. citeturn0search6turn0search2
 
-| Route indicativa | Funzione | Controllo importante |
+| Ambiente | Uso di Docker | Cosa contiene |
+|---|---:|---|
+| Laptop sviluppatore | Sì | API + dipendenze; PostgreSQL locale via Compose |
+| Pull request | Sì | Build e test dell'immagine |
+| Staging | Sì | Stessa immagine candidata alla produzione |
+| Production Cloud Run | Sì | Backend stateless |
+| PostgreSQL production | **No** | Cloud SQL gestito |
+| Documenti production | **No** | Cloud Storage |
+| Frontend Vercel | Normalmente no | Next.js nativo |
+| Vercel serverless backend | No | Functions |
+| Vercel Container Runtime | Possibile | Container OCI, ma attualmente Beta |
+
+Vercel ha introdotto nel 2026 un runtime capace di eseguire immagini OCI costruite da `Dockerfile` o `Containerfile`, oltre a un registry Docker-compatible; al momento della ricerca il Container Runtime è indicato come Beta su tutti i piani. citeturn15search0turn15search8
+
+### Confronto delle piattaforme
+
+| Piattaforma | Modello | Docker | Regione UE utile | Scaling | Costi compute indicativi* | Valutazione per questo progetto |
+|---|---|---:|---|---|---:|---|
+| **Vercel Functions** | Serverless | Non necessario | Varie regioni europee | Automatico | Pro da $20/mese + usage | Ottima semplicità; buono per frontend/BFF |
+| **Vercel Container Runtime** | Serverless container | Sì | Varie | Automatico | usage Vercel | Interessante, ma Beta |
+| **Railway** | PaaS/container | Sì | Amsterdam | Gestito | Pro minimo circa $20; CPU/RAM a consumo | Molto semplice, valido per pilot |
+| **Render** | PaaS/container | Sì | Francoforte | Gestito | istanze a prezzo fisso + servizi | Semplice, valido per pilot |
+| **Google Cloud Run** | Serverless container | Sì | **Milano** | Automatico, anche scale-to-zero | circa $28,51/mese per 0,5 vCPU + 1 GiB sempre attivi, prima del free tier | **Raccomandato** |
+| **AWS ECS/Fargate** | Container managed | Sì | **Milano** | Molto configurabile | compute base circa $17,8/mese nell'esempio us-east-1; servizi accessori extra | Ottimo, ma più complesso |
+| **Azure Container Instances** | Container on-demand | Sì | region dependent | Più elementare | per secondo di CPU/RAM | Meglio per job semplici che come prima scelta API |
+| **Azure Container Apps** | Serverless container | Sì | Varie | Gestito | usage based | Più adatto di ACI per API moderne |
+
+\*Le cifre sono **compute-only**, non preventivi dell'intera infrastruttura, e non includono database, storage, networking, logging, backup, supporto, IVA o eventuali servizi di sicurezza.
+
+Vercel Pro costa attualmente $20/mese per la piattaforma con un deploying seat incluso e $20 di credito mensile sull'infrastruttura; gli ulteriori seat di deploy costano anch'essi $20/mese. citeturn21search2turn21search11
+
+Railway pubblica un prezzo di $20 per vCPU/mese, $10 per GB RAM/mese, $0,05/GB di egress e $0,15/GB/mese per i volumi; il piano Pro opera con un minimo mensile di utilizzo di circa $20. Railway dispone inoltre di una regione europea ad Amsterdam e può distribuire direttamente immagini Docker. citeturn16search0turn16search8turn7search1
+
+Render supporta sia build da repository sia immagini Docker precompilate e offre una regione a Francoforte; il filesystem standard dei web service è effimero, quindi i file persistenti non devono essere considerati parte del container. Render offre anche PostgreSQL gestito. citeturn16search11turn7search2turn16search13turn16search1
+
+Cloud Run ha pricing a consumo differente per regione e configurazione; Milano è inclusa tra le regioni disponibili. Utilizzando i prezzi Tier 1 documentati di `$0.000018/vCPU-second` e `$0.000002/GiB-second` per l'instance-based billing, 0,5 vCPU e 1 GiB allocati continuamente per 30 giorni equivalgono a circa `$28,51` di puro compute prima di free tier e altre componenti. Con billing request-based e scale-to-zero, un servizio poco utilizzato può costare molto meno. citeturn16search2turn9search0
+
+AWS Fargate fattura vCPU, memoria e storage dal momento in cui inizia il pull dell'immagine fino alla terminazione del task, con fatturazione al secondo. Usando le tariffe dell'esempio ufficiale `us-east-1`, un task Linux x86 da 0,5 vCPU e 1 GB sempre acceso per 30 giorni vale circa `$17,77` di puro Fargate compute; **non è il prezzo di Milano**, e in una reale architettura ECS vanno aggiunti almeno gli eventuali componenti networking, bilanciamento, logging e database. ECS/Fargate è disponibile anche nella regione di Milano. citeturn16search3turn1search10
+
+Azure Container Instances esegue container Docker on-demand e fattura memoria e core per secondo; lo considero meno conveniente operativamente per un'API sanitaria permanente perché mette a disposizione primitive più elementari rispetto a Cloud Run o Azure Container Apps. Microsoft descrive Container Apps, invece, come piattaforma serverless gestita per container. citeturn15search6turn15search18turn2search20
+
+### Perché non sceglierei Railway o Render come prima produzione sanitaria
+
+Non c'è un problema fondamentale che li renda inadatti. Entrambi riducono drasticamente il lavoro DevOps e supportano container; Railway pubblica una DPA GDPR e Render dichiara certificazioni come SOC 2 Type II, ISO 27001 e accordi GDPR. citeturn7search19turn7search15
+
+La mia preferenza per GCP deriva invece dall'insieme:
+
+```text
+Cloud Run Milano
+Cloud SQL Milano
+Cloud Storage Milano/Torino
+Identity Platform
+IAM
+Secret Manager
+KMS
+logging
+backup
+```
+
+in un solo perimetro cloud. È quindi una **decisione di architettura e governance**, non un giudizio assoluto sulla sicurezza degli altri provider.
+
+### Quando sceglierei invece Vercel-only
+
+Lo sceglierei se le priorità fossero:
+
+```text
+1. arrivare all'MVP con pochissimo DevOps
+2. team quasi esclusivamente TypeScript
+3. backend semplice e request/response
+4. pochi processi asincroni
+5. upload tramite object storage diretto
+```
+
+In questa configurazione:
+
+```text
+Next.js
++ Route Handlers
++ Vercel Functions
++ PostgreSQL esterno
++ Object storage esterno
+```
+
+Docker diventa opzionale persino in sviluppo.
+
+Il compromesso è una maggiore dipendenza dal runtime e dai limiti Vercel: le Functions hanno limiti documentati di memoria, durata e payload, incluso il tetto di 4,5 MB per request e response. citeturn21search1turn21search8
+
+
+## Dati sanitari, autenticazione, sicurezza e audit
+
+### Modello privacy da assumere in progettazione
+
+Il punto più importante per backend e DPO è evitare di trattare tutti i dati come se avessero lo stesso ruolo giuridico.
+
+Una matrice iniziale dovrebbe essere:
+
+| Trattamento | Ruolo progettuale ipotizzato | Esempio |
 |---|---|---|
-| `/` | Landing | Nessun claim di diagnosi automatica |
-| `/come-funziona` | Spiegazione servizio | Differenza AI/medico |
-| `/sicurezza` | Limiti ed emergenze | Informazione statica, versionata |
-| `/login` | Autenticazione | Nessun dato sanitario in URL |
-| `/eligibility` | Età, Italia, scope | Solo criteri amministrativi |
-| `/identity` | Identificazione | Livello di verifica registrato |
-| `/cases/new/context` | Racconto del paziente | Nessuna interpretazione automatica |
-| `/cases/new/upload` | Upload chat/documenti | Quarantena + malware scan |
-| `/cases/new/review` | Riepilogo | Il paziente controlla ciò che invia |
-| `/checkout` | Pagamento | Nessuna informazione sanitaria al PSP |
-| `/cases/:id` | Stato caso | Status e SLA |
-| `/cases/:id/messages` | Comunicazione sicura | Nessun dato clinico via SMS/email |
-| `/cases/:id/opinion` | Parere firmato | Verifica firma/download |
-| `/clinician/onboarding` | Onboarding medico | Iscrizione, identità, assicurazione |
-| `/clinician/queue` | Coda casi | Nessuna priorità clinica automatica |
-| `/clinician/cases/:id` | Workspace clinico | Accesso solo se assegnato |
-| `/clinician/opinions/:id` | Redazione | Contenuto esclusivamente umano |
-| `/ops` | Operazioni | Supporto senza accesso clinico di default |
-| `/privacy` | DSAR/privacy operations | Accessi separati e auditati |
+| Creazione account paziente | Piattaforma titolare | email, account, preferenze |
+| Gestione contratto medico | Piattaforma titolare | profilo professionale, fatturazione |
+| Acquisizione amministrativa della richiesta | Piattaforma titolare per il proprio servizio, da validare nella DPIA | tipo di richiesta, stato |
+| Documentazione clinica usata dal medico | Medico titolare; piattaforma responsabile ex art. 28 per le funzioni tecniche | conversazione ChatGPT, referti |
+| Valutazione clinica | Medico titolare | parere conclusivo |
+| Audit tecnico | ruolo da determinare per finalità specifica | accessi, operazioni |
+| Marketing | finalità autonoma e separata | newsletter |
 
-**La schermata safety non deve diventare un algoritmo diagnostico.**
+Il Garante indica che il gestore della piattaforma è titolare dei dati necessari a registrazione e servizi propri; per i dati sanitari trattati dal professionista per finalità di cura, invece, il professionista opera come titolare e la piattaforma può essere designata responsabile per attività tecniche quali raccolta, archiviazione e conservazione della documentazione. Il relativo atto deve rispettare l'articolo 28 GDPR. citeturn18view0turn19view1
 
-Per minimizzare il rischio MDR, userei tre livelli:
+Questa tabella è quindi una **base di progettazione**, non sostituisce la mappatura giuridica finale: l'effettivo ruolo dipende dalle finalità e dai mezzi determinati concretamente. Le linee guida EDPB definiscono infatti il responsabile come soggetto che tratta dati per conto del titolare e secondo le sue istruzioni. citeturn17search2turn17search18
 
-| Livello | Esempio | MVP |
-|---|---|---:|
-| Informazione statica | “Questo non è un servizio di emergenza…” con esempi approvati dal direttore medico | Sì |
-| Auto-identificazione | Bottone “Sto cercando assistenza per un'emergenza in corso” | Sì |
-| Interpretazione del contenuto | Software legge “dolore toracico” e classifica il caso urgente | No |
+### DPIA come gate di produzione
 
-Il testo di sicurezza deve essere sottoposto a clinical governance e versionato. Il backend deve registrare semplicemente che l'utente lo ha visualizzato e che ha dichiarato di aver compreso il limite del servizio. **Non chiamerei questa funzione “triage automatico”.**
+La DPIA non deve essere un documento scritto dopo aver completato il software. Deve essere un deliverable del progetto.
 
-Se un'automazione prende invece sintomi individuali e decide se il paziente deve rivolgersi al pronto soccorso, siamo nell'area del software che fornisce informazioni per una decisione medica e quindi il rischio di qualificazione MDSW aumenta sensibilmente. Questa è un'inferenza prudenziale basata sui criteri MDCG e sulla Regola 11. citeturn21view1turn21view2
-
-**Un controllo particolarmente utile contro l'anchoring del medico** consiste nel separare nel workspace:
-
-1. descrizione del problema redatta dal paziente;
-2. eventuali documenti clinici;
-3. conversazione ChatGPT;
-4. conclusioni AI.
-
-La sezione “Conclusioni AI” può essere inizialmente collassata. Il medico legge prima la descrizione originale del paziente e successivamente apre il documento AI. L'evento `ai_source_revealed_at` viene registrato nell'audit clinico.
-
-Questo non elimina il bias, ma rende il workflow meno simile a una ratifica.
-
-**Onboarding medico.** Il professionista non dovrebbe poter prendere un caso prima che siano verificati identità, abilitazione, iscrizione professionale, specialità dichiarata, assicurazione, contratto, credenziali di firma e formazione sulle SOP della piattaforma. La verifica va periodicamente rinnovata e ripetuta in occasione della scadenza dei documenti.
-
-Il medico deve ricevere una formazione specifica su:
-
-| Tema | Regola operativa |
-|---|---|
-| Output AI | Trattarlo come contenuto fornito dal paziente, non come fonte autorevole |
-| Responsabilità | La decisione finale è propria |
-| Dati insufficienti | Non formulare una diagnosi definitiva |
-| Emergenze | Applicare SOP di escalation |
-| Dati personali | Non scaricare/copiare dati in sistemi personali |
-| AI personale | Vietato usare ChatGPT personale o altri LLM con dati del caso |
-| Documentazione | Motivare conclusione e limiti |
-| Correzioni | Addendum, mai sovrascrittura del parere firmato |
-| Comunicazione | Solo canale sicuro interno |
-| Firma | Firma personale, non delegabile |
-
-Questo modello è coerente con la legge 132/2025 e con la responsabilità professionale che permane nell'impiego delle tecnologie sanitarie. citeturn20view0turn10search3
-
-**Stati del caso:**
+Per questa piattaforma suggerisco una regola semplice:
 
 ```text
-DRAFT
-  ↓
-READY_FOR_PAYMENT
-  ↓
-PAYMENT_AUTHORIZED
-  ↓
-SUBMITTED
-  ↓
-HUMAN_INTAKE
-  ├── OUT_OF_SCOPE
-  ├── CLINICAL_ESCALATION
-  └── ACCEPTED
-        ↓
-      ASSIGNED
-        ↓
-      IN_REVIEW
-        ├── NEEDS_INFORMATION
-        │       ↓
-        │   PATIENT_REPLIED
-        │       └──────────→ IN_REVIEW
-        │
-        └── OPINION_DRAFT
-                 ↓
-              SIGNING
-                 ↓
-               SIGNED
-                 ↓
-              DELIVERED
-                 ↓
-                CLOSED
-                 ↓
-            ADDENDUM, se necessario
+No completed DPIA
+       ↓
+No production patient data
 ```
 
-I cambiamenti di stato devono essere implementati come state machine lato server: il frontend non deve poter creare transizioni arbitrarie.
+Il Garante richiama espressamente, nel proprio Compendio per le piattaforme sanitarie, la valutazione d'impatto per i trattamenti che comportano elevato rischio e sottolinea che la valutazione non deve essere considerata statica, ma soggetta a revisione. citeturn18view0
 
-**Workflow clinico raccomandato.**
+### Identità e ruoli
 
-Il primo screening dopo il submit è **umano**. Nel pilot lo affiderei direttamente a un medico, evitando di costruire una pseudo-funzione di triage software. Il medico può:
+Userei tre ruoli primari applicativi:
 
-| Esito | Azione |
+| Ruolo | Permessi |
 |---|---|
-| Caso appropriato | Accetta |
-| Fuori specialità | Riassegna o rifiuta |
-| Informazioni evidentemente insufficienti | Chiede integrazioni |
-| Necessità di visita/esame | Lo dichiara |
-| Possibile urgenza | Contatta il paziente e applica escalation |
-| Impossibile fornire un parere sicuro | Chiude come non valutabile |
+| `PATIENT` | creare e visualizzare esclusivamente i propri casi |
+| `DOCTOR` | visualizzare esclusivamente i casi assegnati e produrre revisioni |
+| `ADMIN` | amministrare la piattaforma, senza accesso clinico indiscriminato |
 
-L'SLA non deve mai essere presentato come garanzia di risposta alle emergenze. Per un pilot proporrei, come **obiettivi operativi e non come standard legali**:
+A livello interno dividerei poi `ADMIN` in almeno:
 
-| Evento | Target proposto |
+```text
+SUPPORT_ADMIN
+CLINICAL_ADMIN
+SECURITY_ADMIN
+```
+
+Un addetto al customer support non deve poter leggere automaticamente l'intera conversazione clinica solo perché possiede un account amministrativo.
+
+L'autorizzazione non deve fermarsi al semplice ruolo:
+
+```python
+if user.role == "PATIENT":
+    assert case.patient_id == user.id
+
+if user.role == "DOCTOR":
+    assert case.assigned_doctor_id == user.id
+
+if user.role == "ADMIN":
+    assert user.has_permission("case_metadata:read")
+```
+
+Quindi: **RBAC + controllo della relazione con la risorsa**.
+
+### MFA
+
+Per medici e amministratori l'MFA deve essere obbligatoria. Come default suggerisco TOTP tramite authenticator app anziché basare l'architettura esclusivamente su SMS.
+
+Google Identity Platform supporta TOTP come secondo fattore e permette configurazioni in cui l'MFA è obbligatoria; la documentazione supporta inoltre modelli di step-up authentication per operazioni più sensibili. citeturn22search2turn22search11turn22search4
+
+Politica suggerita:
+
+| Utente | MFA |
+|---|---|
+| Paziente al signup | facoltativa inizialmente |
+| Paziente apertura documento medico | SHOULD: step-up |
+| Medico | **MUST** |
+| Admin | **MUST** |
+| Cambio email/password | **MUST** step-up |
+| Export massivo | **MUST** step-up + audit |
+
+### Cifratura e accesso
+
+Cloud SQL consente di mantenere l'istanza nella regione scelta e supporta meccanismi di connessione cifrata; Google Cloud offre inoltre CMEK per chi desidera il controllo delle chiavi di cifratura. Cloud Storage cifra i dati a riposo per default e può essere configurato con chiavi gestite dal cliente. citeturn22search0turn22search5turn22search7turn6search6
+
+Per il progetto:
+
+```text
+Internet
+   │ HTTPS
+   ▼
+API
+   │ connessione privata / protetta
+   ▼
+PostgreSQL
+
+Object Storage:
+PUBLIC ACCESS = OFF
+
+Accesso documento:
+utente autorizzato
+   ↓
+backend
+   ↓
+signed URL breve
+   ↓
+singolo oggetto
+```
+
+Il nome del bucket e dell'object key non deve contenere nome, cognome, codice fiscale o diagnosi. Utilizzare UUID casuali:
+
+```text
+cases/01JCF.../attachments/01JCG....pdf
+```
+
+non:
+
+```text
+rossi_mario_infarto_chatgpt.pdf
+```
+
+### Logging
+
+Il logging applicativo deve partire dal principio:
+
+> **Un log serve a capire cosa ha fatto il sistema, non cosa ha raccontato il paziente.**
+
+Quindi è vietato:
+
+```text
+INFO Patient said: "ho dolore toracico..."
+INFO ChatGPT diagnosis: "pericardite..."
+ERROR payload={"full_conversation": "..."}
+```
+
+È accettabile:
+
+```json
+{
+  "event": "case_opened",
+  "actor_id": "usr_01...",
+  "case_id": "case_01...",
+  "request_id": "req_01...",
+  "status": 200,
+  "duration_ms": 83
+}
+```
+
+Il Garante richiede misure tecniche e organizzative adeguate alla natura dei dati e ai rischi, oltre a revisione periodica delle misure e procedure per i data breach. citeturn20view0turn17search1
+
+### Audit trail
+
+I normali log e l'audit trail devono essere due cose differenti.
+
+`application_logs`:
+
+```text
+performance
+errori
+latency
+request_id
+metriche
+```
+
+`audit_events`:
+
+```text
+chi
+ha fatto cosa
+su quale risorsa
+quando
+da quale sessione
+con quale risultato
+```
+
+Schema iniziale:
+
+```sql
+CREATE TABLE audit_events (
+    id              UUID PRIMARY KEY,
+    occurred_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor_id        UUID,
+    actor_role      TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    resource_id     UUID,
+    result          TEXT NOT NULL,
+    correlation_id  UUID NOT NULL,
+    ip_hash         TEXT,
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+```
+
+`metadata` **MUST NOT** contenere testo libero clinico.
+
+Gli eventi minimi da tracciare:
+
+| Evento | Audit |
 |---|---:|
-| Conferma tecnica di ricezione | Immediata |
-| Prima presa in carico umana durante orario operativo | ≤ 2 ore |
-| Parere su caso completo non urgente | ≤ 24 ore |
-| Richiesta integrazione | Sospende SLA finale |
-| Identificazione umana di potenziale urgenza | Azione senza attendere lo SLA ordinario |
+| login/logout | sì |
+| MFA enrollment/reset | sì |
+| apertura caso clinico | sì |
+| download allegato | sì |
+| assegnazione medico | sì |
+| modifica stato | sì |
+| richiesta integrazione | sì |
+| submit review | sì |
+| generazione documento finale | sì |
+| accesso admin eccezionale | sì |
+| export | sì |
 
-La pagina deve mostrare gli orari reali del servizio. Se non è presidiato 24/7, non deve sembrare esserlo.
+Per aumentare la resistenza alle alterazioni, l'applicazione non deve avere normali operazioni `UPDATE` o `DELETE` sugli audit event; eventuali correzioni generano nuovi eventi.
 
-Per i pagamenti, durante il pilot preferirei **pre-autorizzazione della carta e cattura dopo l'accettazione clinico-amministrativa**, se il PSP scelto lo consente. In alternativa, pagamento seguito da rimborso automatico nei casi fuori scope prima di una sostanziale prestazione medica.
+### Database
 
-**Il parere finale non dovrebbe chiamarsi “certificazione della diagnosi AI”.**
-
-Template consigliato:
-
-```text
-PARERE MEDICO DI REVISIONE CLINICA A DISTANZA
-
-Paziente:
-Medico:
-Data:
-
-QUESITO
-Richiesta di valutazione delle ipotesi emerse da una conversazione
-con un sistema di intelligenza artificiale generalista.
-
-DOCUMENTAZIONE ESAMINATA
-- Descrizione del paziente
-- Conversazione dichiarata dal paziente come proveniente da ChatGPT
-- Eventuali documenti allegati
-
-LIMITI DELLA VALUTAZIONE
-- assenza/presenza di esame obiettivo
-- dati clinici disponibili
-- eventuali accertamenti mancanti
-
-VALUTAZIONE CLINICA INDIPENDENTE
-[testo del medico]
-
-VALUTAZIONE DELLE IPOTESI AI
-[ ] Concordo sostanzialmente
-[ ] Concordo parzialmente
-[ ] Non concordo
-[ ] Informazioni insufficienti
-[ ] Non è possibile una valutazione sicura a distanza
-
-INDICAZIONI
-[testo del medico]
-
-NECESSITÀ DI VISITA/ACCERTAMENTI
-[testo]
-
-Firma del medico
-```
-
-La formula **“conversazione dichiarata dal paziente come proveniente da ChatGPT”** risolve un problema concreto: un PDF o un testo caricato dall'utente non fornisce, di per sé, una prova crittografica della sua provenienza da OpenAI. La piattaforma deve preservare il file originale e il suo hash, ma non dichiararne un'autenticità che non può dimostrare.
-
-## Architettura backend, API e modello dati
-
-Per un MVP regolato e ricco di dati sanitari, consiglierei un **modular monolith**, non microservizi. È più semplice mantenere transazioni, audit, controllo degli accessi e change management in un unico boundary. I componenti ad alto isolamento — storage, firma, pagamenti, notifiche e malware scanning — rimangono servizi esterni o worker asincroni.
-
-**Architettura logica:**
-
-```text
-Browser paziente / medico
-        │
-        ▼
-CDN/WAF → API Gateway
-        │
-        ▼
-Identity Provider / OIDC
-        │
-        ▼
-Application Backend
- ├─ Accounts & Identity
- ├─ Cases
- ├─ Clinical Messaging
- ├─ Physician Workflow
- ├─ Opinion & Signature
- ├─ Payments
- ├─ Consent/Privacy
- └─ Audit
-        │
-        ├──────── PostgreSQL
-        │
-        ├──────── Object Storage cifrato
-        │
-        ├──────── Append-only Audit Store
-        │
-        └──────── Queue / Worker
-                    ├─ malware scanning
-                    ├─ notifications
-                    ├─ PDF generation
-                    └─ integration adapters
-
-External services:
-- PSP
-- Qualified Trust Service Provider
-- Email/SMS provider
-- Identity verification provider
-- [NO LLM in clinical path for MVP]
-```
-
-**Decisioni architetturali:**
-
-| Decisione | Opzione scelta | Alternativa | Motivazione |
-|---|---|---|---|
-| Backend | Modular monolith | Microservizi | Minor superficie operativa e audit più semplice |
-| API | REST versionata | GraphQL pubblico | Contratti espliciti e autorizzazione più prevedibile |
-| DB | PostgreSQL | NoSQL primario | Integrità referenziale e transazioni |
-| Documenti | Object storage EEA | DB blob | Separazione e lifecycle |
-| File upload | Signed upload URL | Proxy completo via API | Riduce carico applicativo |
-| Clinical search | Solo metadata | Full-text health search | Minimizzazione |
-| Identità | OIDC + strong MFA | Auth custom | Minor rischio |
-| Medici | MFA phishing-resistant | Password singola | Account ad alto privilegio |
-| Audit | Append-only | Log applicativo ordinario | Evidenza e non ripudio |
-| Firma | QTSP esterno | Chiavi private nel backend | Il backend non custodisce chiavi di firma |
-| Pagamenti | Hosted PSP | PAN memorizzati | Minimizzazione PCI |
-| AI clinica | Nessuna | OpenAI API | Minimizzazione MDR/AI Act |
-| Analytics | Aggregati first-party | Session replay | Evitare esposizione sanitaria |
-
-GraphQL può essere introdotto successivamente per dashboard interne, ma non ne vedo un vantaggio sufficiente nell'MVP da giustificare un secondo modello di autorizzazione. In particolare, con dati sanitari, l'autorizzazione deve essere fatta **a livello di oggetto e di campo**, non soltanto a livello di endpoint.
-
-**Endpoint REST principali:**
-
-| Metodo | Endpoint | Ruolo | Scopo |
-|---|---|---|---|
-| `POST` | `/v1/cases` | Patient | Crea caso draft |
-| `GET` | `/v1/cases/{id}` | Patient/assigned physician | Legge caso autorizzato |
-| `POST` | `/v1/cases/{id}/uploads` | Patient | Crea sessione upload |
-| `POST` | `/v1/cases/{id}/uploads/{uploadId}/complete` | Patient | Conferma upload/hash |
-| `POST` | `/v1/cases/{id}/submit` | Patient | Invia caso |
-| `POST` | `/v1/cases/{id}/messages` | Patient/physician | Messaggio sicuro |
-| `GET` | `/v1/cases/{id}/messages` | Patient/physician | Thread |
-| `POST` | `/v1/payments/authorization` | Patient | Preautorizza pagamento |
-| `POST` | `/v1/webhooks/payment-provider` | PSP | Aggiorna pagamento |
-| `POST` | `/v1/clinical/cases/{id}/accept` | Physician | Accetta caso |
-| `POST` | `/v1/clinical/cases/{id}/request-information` | Physician | Chiede integrazione |
-| `POST` | `/v1/clinical/cases/{id}/escalate` | Physician | Escalation clinica |
-| `POST` | `/v1/clinical/cases/{id}/opinions` | Physician | Crea draft |
-| `PUT` | `/v1/clinical/opinions/{id}` | Author physician | Aggiorna draft |
-| `POST` | `/v1/clinical/opinions/{id}/finalize` | Author physician | Blocca il contenuto |
-| `POST` | `/v1/clinical/opinions/{id}/sign` | Author physician | Avvia firma QTSP |
-| `GET` | `/v1/opinions/{id}/document` | Patient/physician | Recupera PDF firmato |
-| `POST` | `/v1/opinions/{id}/addenda` | Physician | Correzione successiva |
-| `GET` | `/v1/audit/cases/{id}` | Privacy/Security | Audit autorizzato |
-
-Tutti i POST mutativi sensibili dovrebbero supportare `Idempotency-Key`; gli update concorrenti dovrebbero utilizzare versioning/`If-Match` o un campo `version`. I webhook devono avere firma del provider, controllo timestamp e replay protection.
-
-**Esempio creazione caso:**
-
-```http
-POST /v1/cases
-Authorization: Bearer <token>
-Content-Type: application/json
-Idempotency-Key: 58e730a1-...
-
-{
-  "service_code": "AI_CONVERSATION_MEDICAL_REVIEW",
-  "patient_summary": "Descrizione scritta direttamente dal paziente.",
-  "source": {
-    "declared_provider": "OpenAI ChatGPT",
-    "source_type": "USER_SUPPLIED",
-    "provenance_verified": false
-  },
-  "service_scope_acknowledged": true
-}
-```
-
-```json
-{
-  "id": "case_01K9F4M7Y2...",
-  "status": "DRAFT",
-  "service_code": "AI_CONVERSATION_MEDICAL_REVIEW",
-  "version": 1,
-  "created_at": "2026-11-05T09:17:33+01:00",
-  "required_steps": [
-    "IDENTITY",
-    "SOURCE_UPLOAD",
-    "SERVICE_ACKNOWLEDGEMENTS",
-    "PAYMENT_AUTHORIZATION"
-  ]
-}
-```
-
-**Esempio inizializzazione upload:**
-
-```http
-POST /v1/cases/case_01K9F4M7Y2/uploads
-```
-
-```json
-{
-  "filename": "chatgpt-conversation.pdf",
-  "media_type": "application/pdf",
-  "size_bytes": 1843921,
-  "source_category": "AI_CONVERSATION"
-}
-```
-
-```json
-{
-  "upload_id": "upl_01K9...",
-  "upload_url": "<temporary-presigned-url>",
-  "expires_at": "2026-11-05T09:32:33+01:00",
-  "max_size_bytes": 10485760,
-  "status": "AWAITING_UPLOAD"
-}
-```
-
-Dopo l'upload il file passa in `QUARANTINE`, viene validato il tipo reale, sottoposto a malware scanning e soltanto successivamente diventa visibile al medico. Nessun parser dovrebbe poter eseguire macro o contenuti attivi.
-
-**Esempio richiesta integrazione del medico:**
-
-```http
-POST /v1/clinical/cases/case_01K9F4M7Y2/request-information
-Authorization: Bearer <physician-token>
-```
-
-```json
-{
-  "questions": [
-    {
-      "id": "q1",
-      "text": "Può indicare la durata degli episodi e se l'esordio e la cessazione sono improvvisi?"
-    }
-  ],
-  "reason": "CLINICAL_INFORMATION_INSUFFICIENT"
-}
-```
-
-```json
-{
-  "case_id": "case_01K9F4M7Y2",
-  "status": "NEEDS_INFORMATION",
-  "sla_paused_at": "2026-11-05T11:04:17+01:00"
-}
-```
-
-**Esempio finalizzazione del parere:**
-
-```http
-POST /v1/clinical/opinions/opn_01K9/finalize
-If-Match: "7"
-```
-
-```json
-{
-  "assessment_of_ai_output": "PARTIALLY_AGREE",
-  "clinical_assessment": "Testo redatto autonomamente dal medico.",
-  "limitations": [
-    "Valutazione effettuata a distanza",
-    "Esame obiettivo non disponibile"
-  ],
-  "recommendations": [
-    "Approfondimento clinico indicato nel testo del parere"
-  ],
-  "requires_in_person_assessment": true,
-  "physician_assigned_urgency": "ROUTINE",
-  "reviewed_source_ids": [
-    "src_01K9..."
-  ]
-}
-```
-
-Il backend deve rifiutare questa chiamata se il medico non è l'autore/assegnatario, se il caso è già firmato o se l'MFA/sessione forte non è valida.
-
-**Modello ER:**
+Il database relazionale dovrebbe partire da queste entità:
 
 ```mermaid
 erDiagram
     USER ||--o| PATIENT_PROFILE : has
-    USER ||--o| PHYSICIAN_PROFILE : has
-
-    PATIENT_PROFILE ||--o{ MEDICAL_CASE : creates
-    MEDICAL_CASE ||--o{ CASE_SOURCE : contains
-    MEDICAL_CASE ||--o{ CLINICAL_MESSAGE : has
-    MEDICAL_CASE ||--o{ CASE_ASSIGNMENT : has
-    MEDICAL_CASE ||--o{ PAYMENT : has
-    MEDICAL_CASE ||--o{ CONSENT_RECORD : references
-
-    PHYSICIAN_PROFILE ||--o{ CASE_ASSIGNMENT : receives
-    PHYSICIAN_PROFILE ||--o{ MEDICAL_OPINION : authors
-
-    MEDICAL_CASE ||--o{ MEDICAL_OPINION : produces
-    MEDICAL_OPINION ||--o{ OPINION_VERSION : versions
-    OPINION_VERSION ||--o| SIGNATURE_ARTIFACT : signed_by
-
-    USER ||--o{ AUDIT_EVENT : performs
-    MEDICAL_CASE ||--o{ AUDIT_EVENT : generates
-
-    USER {
-        uuid id PK
-        string role
-        string email
-        boolean email_verified
-        string identity_level
-        datetime created_at
-    }
-
-    PATIENT_PROFILE {
-        uuid user_id FK
-        date birth_date
-        string country
-        string locale
-    }
-
-    PHYSICIAN_PROFILE {
-        uuid user_id FK
-        string professional_registration
-        string specialty
-        string verification_status
-        date insurance_expiry
-        string signature_provider_id
-    }
-
-    MEDICAL_CASE {
-        uuid id PK
-        uuid patient_id FK
-        string status
-        string service_code
-        text patient_summary
-        datetime submitted_at
-        int version
-    }
-
-    CASE_SOURCE {
-        uuid id PK
-        uuid case_id FK
-        string category
-        string media_type
-        string sha256
-        boolean provenance_verified
-        datetime uploaded_at
-    }
-
-    CASE_ASSIGNMENT {
-        uuid id PK
-        uuid case_id FK
-        uuid physician_id FK
-        datetime assigned_at
-        datetime ended_at
-    }
-
-    MEDICAL_OPINION {
-        uuid id PK
-        uuid case_id FK
-        uuid physician_id FK
-        string status
-        datetime created_at
-    }
-
-    OPINION_VERSION {
-        uuid id PK
-        uuid opinion_id FK
-        int version
-        string assessment
-        text clinical_assessment
-        datetime finalized_at
-    }
-
-    SIGNATURE_ARTIFACT {
-        uuid id PK
-        uuid opinion_version_id FK
-        string document_hash
-        string signature_type
-        datetime signed_at
-    }
-
-    PAYMENT {
-        uuid id PK
-        uuid case_id FK
-        string provider_reference
-        int amount_cents
-        string status
-    }
-
-    AUDIT_EVENT {
-        uuid id PK
-        uuid actor_id FK
-        uuid case_id FK
-        string action
-        datetime occurred_at
-        string request_id
-    }
+    USER ||--o| DOCTOR_PROFILE : has
+    PATIENT_PROFILE ||--o{ CASE : creates
+    DOCTOR_PROFILE ||--o{ CASE : assigned
+    CASE ||--o{ ATTACHMENT : contains
+    CASE ||--o{ CASE_MESSAGE : contains
+    CASE ||--o{ REVIEW : receives
+    CASE ||--o{ CASE_EVENT : changes
+    USER ||--o{ AUDIT_EVENT : produces
 ```
 
-**Tabelle fisiche consigliate:**
-
-| Tabella | Contenuto | Nota privacy |
-|---|---|---|
-| `users` | identità account | Separata dai dati clinici |
-| `patient_profiles` | dati paziente minimi | Minimizzare demografia |
-| `physician_profiles` | credentialing | Accesso amministrativo |
-| `medical_cases` | metadati e racconto paziente | Health data |
-| `case_sources` | metadata degli allegati | File in object storage |
-| `clinical_messages` | messaggi | Health data |
-| `case_assignments` | medico assegnato | Authorization source |
-| `medical_opinions` | root parere | Immutabilità dopo firma |
-| `opinion_versions` | versioni/addenda | Nessuna sovrascrittura |
-| `signature_artifacts` | hash/certificato/timestamp | Evidenza |
-| `payments` | dati PSP | Nessuna diagnosi |
-| `consent_records` | versione accettazioni | Evidenza |
-| `notification_jobs` | notifiche generiche | Nessun sintomo |
-| `audit_events` | accessi/azioni | Nessun testo clinico |
-| `security_incidents` | incident management | Accesso segregato |
-
-**JSON Schema principali.**
-
-Utente:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.example.it/user.json",
-  "title": "User",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["id", "role", "email_verified", "identity_level", "created_at"],
-  "properties": {
-    "id": {
-      "type": "string",
-      "pattern": "^usr_[A-Za-z0-9]+$"
-    },
-    "role": {
-      "enum": ["PATIENT", "PHYSICIAN", "CLINICAL_SUPERVISOR", "SUPPORT", "PRIVACY", "ADMIN"]
-    },
-    "email_verified": {
-      "type": "boolean"
-    },
-    "identity_level": {
-      "enum": ["BASIC", "VERIFIED", "STRONG"]
-    },
-    "locale": {
-      "type": "string",
-      "default": "it-IT"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    }
-  }
-}
-```
-
-Conversazione/documento AI:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.example.it/conversation-source.json",
-  "title": "ConversationSource",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "id",
-    "case_id",
-    "declared_provider",
-    "source_type",
-    "sha256",
-    "provenance_verified",
-    "uploaded_at"
-  ],
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "case_id": {
-      "type": "string"
-    },
-    "declared_provider": {
-      "type": "string",
-      "maxLength": 100
-    },
-    "source_type": {
-      "enum": ["USER_UPLOAD", "USER_PASTED_TEXT"]
-    },
-    "media_type": {
-      "type": "string"
-    },
-    "size_bytes": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "sha256": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "provenance_verified": {
-      "type": "boolean",
-      "const": false
-    },
-    "malware_scan_status": {
-      "enum": ["PENDING", "CLEAN", "REJECTED"]
-    },
-    "uploaded_at": {
-      "type": "string",
-      "format": "date-time"
-    }
-  }
-}
-```
-
-Caso:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.example.it/medical-case.json",
-  "title": "MedicalCase",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "id",
-    "patient_id",
-    "service_code",
-    "status",
-    "version",
-    "created_at"
-  ],
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "patient_id": {
-      "type": "string"
-    },
-    "service_code": {
-      "const": "AI_CONVERSATION_MEDICAL_REVIEW"
-    },
-    "status": {
-      "enum": [
-        "DRAFT",
-        "SUBMITTED",
-        "HUMAN_INTAKE",
-        "OUT_OF_SCOPE",
-        "CLINICAL_ESCALATION",
-        "ACCEPTED",
-        "ASSIGNED",
-        "IN_REVIEW",
-        "NEEDS_INFORMATION",
-        "OPINION_DRAFT",
-        "SIGNING",
-        "SIGNED",
-        "DELIVERED",
-        "CLOSED"
-      ]
-    },
-    "patient_summary": {
-      "type": "string",
-      "maxLength": 10000
-    },
-    "assigned_physician_id": {
-      "type": ["string", "null"]
-    },
-    "version": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    }
-  }
-}
-```
-
-Parere:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.example.it/medical-opinion.json",
-  "title": "MedicalOpinion",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "id",
-    "case_id",
-    "physician_id",
-    "assessment_of_ai_output",
-    "clinical_assessment",
-    "status"
-  ],
-  "properties": {
-    "id": {
-      "type": "string"
-    },
-    "case_id": {
-      "type": "string"
-    },
-    "physician_id": {
-      "type": "string"
-    },
-    "assessment_of_ai_output": {
-      "enum": [
-        "AGREE",
-        "PARTIALLY_AGREE",
-        "DISAGREE",
-        "INSUFFICIENT_INFORMATION",
-        "CANNOT_ASSESS"
-      ]
-    },
-    "clinical_assessment": {
-      "type": "string",
-      "minLength": 1
-    },
-    "limitations": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "recommendations": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "requires_in_person_assessment": {
-      "type": "boolean"
-    },
-    "physician_assigned_urgency": {
-      "enum": ["EMERGENCY", "URGENT", "ROUTINE", "UNDETERMINED"]
-    },
-    "clinical_decision_source": {
-      "const": "HUMAN_PHYSICIAN"
-    },
-    "status": {
-      "enum": ["DRAFT", "FINALIZED", "SIGNED", "SUPERSEDED_BY_ADDENDUM"]
-    },
-    "source_hashes": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      }
-    }
-  }
-}
-```
-
-Il valore `physician_assigned_urgency` deve essere compilato dal medico: il backend non deve calcolarlo.
-
-## Sicurezza, GDPR, firma, pagamenti e fornitori AI
-
-La piattaforma ricade in uno dei contesti in cui la privacy non può essere aggiunta a posteriori. Il Garante ha dedicato un compendio specifico alle piattaforme che intermediano l'accesso a professionisti sanitari, richiamando privacy by design, corretta attribuzione dei ruoli, sicurezza e DPIA. citeturn5view0turn6view0turn6view1
-
-**Ruoli privacy.** Non vanno decisi soltanto scrivendo nel contratto “la piattaforma è responsabile”: il Garante sottolinea che la qualifica di titolare, contitolare o responsabile dipende da chi determina realmente finalità e mezzi del trattamento. citeturn5view0
-
-Per il modello descritto vedo due strutture possibili:
-
-| Modello | Relazione clinica | Privacy | Valutazione |
-|---|---|---|---|
-| Erogatore sanitario unico | L'entità sanitaria contratta con il paziente e organizza i medici | Entità sanitaria titolare della cura; fornitori tech responsabili | **Preferibile** |
-| Marketplace di medici indipendenti | Il paziente contratta col singolo medico | Ruoli frammentati e potenziale contitolarità | Più complesso |
-
-Dal punto di vista operativo preferirei un soggetto chiaramente responsabile della prestazione sanitaria, con la piattaforma tecnologica eventualmente separata come responsabile del trattamento. Tentare di definire la società “solo marketplace” mentre decide prezzo, SLA, protocolli, assegnazione, interfaccia clinica e formato del parere potrebbe non riflettere la realtà operativa; questa è una valutazione che il legale deve fare sulla struttura effettiva. Il principio di attribuire i ruoli secondo le funzioni reali è confermato dal Garante. citeturn5view0
-
-**Base giuridica.** I dati sanitari appartengono alle categorie particolari dell'art. 9 GDPR. Il Garante ha chiarito che, quando il trattamento è necessario per finalità di cura svolte da o sotto la responsabilità di professionisti soggetti al segreto professionale, può operare l'art. 9(2)(h) senza trasformare il consenso privacy nel fondamento universale di ogni trattamento sanitario; finalità ulteriori devono invece essere analizzate separatamente. citeturn4search0turn4search3
-
-Quindi la UI deve tenere distinti almeno:
-
-| Elemento | Non confondere con |
-|---|---|
-| Accettazione del contratto del servizio | Consenso privacy |
-| Informazioni/consenso alla prestazione sanitaria quando necessario | Marketing |
-| Presa visione informativa GDPR | Consenso al trattamento sanitario |
-| Consenso marketing | Prestazione sanitaria |
-| Informativa sull'eventuale uso di AI | Informativa privacy |
-| Cookie non necessari | Accesso al servizio |
-
-**DPIA.** Deve iniziare prima del pilot. Il compendio del Garante sulle piattaforme sanitarie considera proprio la combinazione di dati sanitari, pazienti vulnerabili, nuove tecnologie e potenziale larga scala come contesto che richiede una valutazione d'impatto; la DPIA deve inoltre essere mantenuta aggiornata, non archiviata come documento statico. citeturn6view0
-
-La DPIA dovrebbe contenere:
-
-| Workstream | Output |
-|---|---|
-| Data mapping | DFD completo |
-| Finalità | Tabella purpose-by-purpose |
-| Basi giuridiche | Art. 6 + Art. 9 |
-| Ruoli | Controller/processor/joint-controller matrix |
-| Processori | Registro con DPA |
-| Trasferimenti | Mappa EEA/extra-EEA |
-| Minimizzazione | Campo per campo |
-| Retention | Categoria per categoria |
-| Access control | Ruolo per risorsa |
-| Threat model | Rischi tecnici e organizzativi |
-| Clinical privacy risk | Accessi impropri/uso secondario |
-| DSAR | Accesso, rettifica, limitazione, cancellazione |
-| Incident response | GDPR + clinical/security incident |
-| Residual risk | Approvazione titolare/DPO |
-
-Se l'attività raggiunge una scala di trattamento sanitario tale da ricadere nei criteri dell'art. 37, occorre inoltre un DPO; il Garante richiama specificamente il trattamento su larga scala di dati sanitari come fattore rilevante. citeturn4search7
-
-**Minimizzazione.** Le scelte tecniche che considero non negoziabili sono:
-
-| Area | Requisito |
-|---|---|
-| URL | Mai sintomi, nome o diagnosi in query string |
-| Email/SMS | “Hai un aggiornamento”, non contenuto clinico |
-| Logs | ID pseudonimi, niente testo medico |
-| Error monitoring | Payload sanitari redatti/rimossi |
-| Analytics | Nessun raw health content |
-| Session replay | Disabilitato nelle aree autenticate |
-| Advertising pixels | Assenti nell'area clinica |
-| Search index | Nessun full-text clinico per default |
-| PSP metadata | `case_id` pseudonimo, nessuna diagnosi |
-| Support | Accesso solo a metadati salvo escalation autorizzata |
-| Dev/staging | Dati sintetici, mai copia indiscriminata del DB production |
-
-**Retention.** Non hardcoderei in prodotto un generico “cancelliamo tutto dopo 30 giorni”. Il documento originale fornito dal paziente può diventare parte della documentazione su cui il medico ha fondato il proprio giudizio; la retention deve quindi essere stabilita congiuntamente da legal, clinical governance e privacy sulla base della natura della prestazione, della normativa regionale, degli obblighi professionali e delle esigenze di tutela giudiziaria.
-
-Il sistema dovrebbe invece avere una retention policy differenziata:
-
-| Categoria | Strategia |
-|---|---|
-| Originale su cui si fonda il parere | Policy documentale sanitaria |
-| Parere firmato | Conservazione medico-legale definita formalmente |
-| Addenda | Insieme al parere originale |
-| Quarantine file temporanei | Cancellazione rapida dopo scanning |
-| URL di upload | Minuti |
-| Sessioni | Ore/giorni secondo sicurezza |
-| Payment records | Policy fiscale/contabile |
-| Audit | Policy security/evidentiary |
-| Backup | Finestra definita e automatizzata |
-| Marketing | Policy indipendente |
-| Account inattivo | Policy distinta dal record sanitario |
-
-La cancellazione richiesta dal paziente deve quindi essere gestita per categoria: il GDPR non implica che ogni documento debba essere eliminato quando esistono obblighi legali o basi per conservarlo. citeturn4search3
-
-**Cifratura e IAM.** Come baseline tecnica:
-
-| Controllo | Implementazione |
-|---|---|
-| In transit | TLS moderno, HSTS |
-| At rest | DB/object storage cifrati |
-| Keys | KMS/HSM, separate per ambiente |
-| Clinical text | Valutare envelope encryption applicativa |
-| Backups | Cifrati con chiavi separate |
-| Patient auth | Passkey/MFA opzionale + step-up per operazioni sensibili |
-| Physician auth | MFA obbligatoria, preferibilmente WebAuthn |
-| Admin auth | MFA + accesso JIT |
-| Service identity | Credenziali separate e rotate |
-| Authorization | RBAC + ABAC basato sull'assegnazione |
-| Export | Re-authentication |
-| Signing | Re-authentication/MFA |
-| Privileged access | Sessioni auditabili |
-| Break glass | Eccezionale, motivato e notificato |
-
-Un medico non deve poter aprire tutti i casi soltanto perché ha ruolo `PHYSICIAN`: deve avere anche una relazione di assegnazione attiva con quel caso.
-
-Il Garante insiste sull'adozione di misure tecniche e organizzative proporzionate e, nel compendio sulle piattaforme sanitarie, richiama anche la necessità di verificare l'effettiva qualifica dei professionisti presenti sulla piattaforma. citeturn6view1
-
-**Audit trail.** Registrerei ogni accesso significativo, compresi i read:
-
-```json
-{
-  "event_id": "aud_01K...",
-  "timestamp": "2026-11-05T11:33:04+01:00",
-  "actor_id": "usr_01K...",
-  "actor_role": "PHYSICIAN",
-  "action": "CASE_SOURCE_VIEWED",
-  "resource_type": "CASE_SOURCE",
-  "resource_id": "src_01K...",
-  "case_id": "case_01K...",
-  "authorization_basis": "ACTIVE_CASE_ASSIGNMENT",
-  "request_id": "req_01K...",
-  "ip_hash": "sha256:...",
-  "success": true
-}
-```
-
-Non metterei mai `clinical_assessment`, sintomi o diagnosi nell'audit log.
-
-Per rendere difficile la manomissione, l'audit può essere append-only, con hash chaining o storage immutabile. Le correzioni non cancellano eventi precedenti.
-
-**Incident response.** Il GDPR prevede la notifica all'autorità entro 72 ore dalla conoscenza della violazione quando ricorrono le condizioni previste dall'art. 33 e la comunicazione agli interessati quando il rischio è elevato ai sensi dell'art. 34. citeturn4search3
-
-Creerei tre code distinte ma coordinate:
+Tabelle minime:
 
 ```text
-SECURITY INCIDENT
-es. compromissione credenziali
-
-PRIVACY INCIDENT
-es. medico vede caso non assegnato
-
-CLINICAL SAFETY INCIDENT
-es. paziente urgente non correttamente gestito
+users
+patient_profiles
+doctor_profiles
+doctor_credentials
+cases
+case_assignments
+attachments
+case_messages
+reviews
+review_documents
+case_events
+audit_events
+consent_records
+notification_events
 ```
 
-Un evento può appartenere a più categorie.
+Le conversazioni di ChatGPT non dovrebbero essere duplicate contemporaneamente in tre posti. Se l'originale è un PDF, il binario resta nello storage e PostgreSQL conserva metadati, hash e object key. Se il paziente incolla testo, la scelta tra PostgreSQL e object storage deve essere standardizzata dal team; io preferirei object storage anche per il payload lungo e PostgreSQL per i campi indicizzati.
 
-Va inoltre eseguito un **NIS2 applicability assessment**: la sanità rientra tra i settori disciplinati dalla normativa NIS2, recepita in Italia con il d.lgs. 138/2024, ma l'applicabilità concreta dipende dalla natura e dimensione dell'organizzazione e dagli ulteriori criteri normativi. Non assumerei né esclusione né inclusione senza screening formale. citeturn15search0turn15search2
+### Stato del caso
 
-**ChatGPT esterno contro API OpenAI.** È una delle decisioni più importanti del progetto.
+Userei una macchina a stati esplicita:
 
-| Tema | ChatGPT usato autonomamente dal paziente | API OpenAI integrata |
-|---|---|---|
-| Chi invia dati a OpenAI | Paziente | Piattaforma |
-| OpenAI è processor della piattaforma | No, per quella conversazione esterna | Potenzialmente sì |
-| DPA piattaforma–OpenAI | Non per il percorso esterno | Necessario da valutare/stipulare |
-| MDR | Minore se piattaforma non interpreta | Dipende dalla funzione; alto se clinica |
-| AI Act | AI non integrata nel tuo sistema | Ruolo deployer/provider da analizzare |
-| DPIA | La piattaforma tratta la copia caricata | Include anche flusso verso OpenAI |
-| Trasferimenti | Scelta del paziente esterna | Responsabilità di procurement della piattaforma |
-| Model versioning | Irrilevante al software | Necessita change control |
-| Prompt injection | Documento passivo | Diventa threat model rilevante |
-| Data retention OpenAI | Gestita dal paziente e dalle sue impostazioni | Da configurare contrattualmente |
-| Raccomandazione | **MVP** | Post-MVP |
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> SUBMITTED
+    SUBMITTED --> ASSIGNED
+    ASSIGNED --> UNDER_REVIEW
+    UNDER_REVIEW --> NEEDS_INFORMATION
+    NEEDS_INFORMATION --> UNDER_REVIEW
+    UNDER_REVIEW --> REVIEWED
+    DRAFT --> CANCELLED
+    SUBMITTED --> CANCELLED
+    REVIEWED --> [*]
+```
 
-Per gli account consumer, OpenAI dichiara attualmente che i contenuti dei servizi personali possono essere utilizzati per migliorare i modelli quando le relative impostazioni lo consentono, e mette a disposizione controlli per disabilitarne l'uso; i dati business/API sono invece trattati secondo condizioni differenti. citeturn23search0turn23search1turn23search6
+Un eventuale esito medico di urgenza **non deve essere confuso con lo stato tecnico del workflow**. Potrebbe essere:
 
-La tua piattaforma non dovrebbe quindi affermare:
+```text
+review.outcome = URGENT_EVALUATION
+case.status = REVIEWED
+```
 
-> “La conversazione ChatGPT è completamente privata”
+Questo rende chiaro che è stato il medico a esprimere l'indicazione.
 
-perché non controlla il tipo di account né le impostazioni del paziente.
+### Backup, ripristino e retention
 
-Meglio:
+Cloud SQL è un database gestito e dispone di funzionalità di backup e recovery; Google ha inoltre esteso nel 2026 le funzioni di enhanced backup e protezione tramite CMEK. citeturn6search17turn22search5
 
-> “La conversazione è stata creata su un servizio esterno alla nostra piattaforma. Il trattamento effettuato dal relativo fornitore è disciplinato dalle condizioni e impostazioni del tuo account. Noi iniziamo a trattare la copia quando ce la invii.”
+Come target tecnico iniziale proporrei:
 
-E soprattutto: **l'MVP non dovrebbe chiedere al paziente di creare una nuova conversazione con ChatGPT**. Dovrebbe essere rivolto a persone che hanno già utilizzato il servizio. In questo modo non sei tu a prescrivere l'invio di dati sanitari a un provider esterno.
-
-Per l'API, OpenAI dichiara attualmente che i dati inviati tramite la piattaforma API non vengono utilizzati per addestrare i modelli per default; offre un DPA per clienti business/API e, per clienti idonei, opzioni di data residency europea e controlli di retention che dipendono dall'endpoint e dalla configurazione. Questi elementi devono essere verificati sullo specifico contratto e sullo specifico endpoint al momento della procurement, non assunti genericamente. citeturn23search27turn22search0turn22search19
-
-OpenAI offre inoltre accordi e prodotti specifici per clienti healthcare, compreso un BAA per esigenze HIPAA; un BAA statunitense, tuttavia, **non sostituisce il GDPR, il DPA ex art. 28 o l'analisi dei trasferimenti richiesta nell'UE**. citeturn22search3turn23search19
-
-**Checklist contrattuale per un futuro fornitore LLM:**
-
-| Clausola/controllo | Obbligatorio prima di PHI/dati sanitari |
+| Parametro | Target progettuale |
 |---|---:|
-| DPA art. 28 GDPR | ✓ |
-| Ruoli privacy espliciti | ✓ |
-| Elenco subprocessors | ✓ |
-| Preavviso cambi subprocessors | ✓ |
-| Regione di trattamento | ✓ |
-| Regione di storage | ✓ |
-| Retention prompt/output | ✓ |
-| No-training policy | ✓ |
-| Opt-in separato per miglioramento modello | ✓ |
-| Cancellazione a fine contratto | ✓ |
-| Assistenza DSAR | ✓ |
-| Incident notification SLA | ✓ |
-| Trasferimenti internazionali | ✓ |
-| SCC/altro meccanismo se necessario | ✓ |
-| Security documentation | ✓ |
-| Audit/assurance reports | ✓ |
-| Cifratura | ✓ |
-| Accesso umano ai contenuti | ✓ |
-| Model/version change notice | ✓ |
-| Deprecation notice | ✓ |
-| Possibilità di version pinning | Desiderabile |
-| Data residency per lo specifico endpoint | ✓ |
-| Zero/private retention per lo specifico endpoint | Da negoziare |
-| Limitazioni di responsabilità | Revisione legale |
-| Indennizzi | Revisione legale |
-| Uptime/SLA | Revisione tecnica |
-| Exit/export | ✓ |
-| Certificazione di cancellazione | Desiderabile |
-| Condizioni per uso sanitario | ✓ |
-| Restrizioni Usage Policies | ✓ |
-| Uso del marchio ChatGPT | ✓ |
-| Divieto di claim di endorsement OpenAI | ✓ |
+| RPO database | ≤ 15 minuti |
+| RTO core service | ≤ 4 ore |
+| Restore test | trimestrale |
+| Backup encryption | obbligatoria |
+| Staging con dati reali | vietato |
+| Copia DB production → staging | vietata salvo procedura di anonimizzazione verificata |
 
-L'attuale documentazione OpenAI conferma l'esistenza di DPA, controlli business e opzioni di residenza dati europea per clienti/endpoint idonei, ma tali configurazioni sono specifiche del prodotto e possono evolvere. citeturn22search0turn22search2turn22search8turn22search19
+Questi sono **obiettivi architetturali**, non periodi imposti dalla legge.
 
-**Firma e pagamenti.** Il PDF finale dovrebbe essere generato dal backend a partire da una versione finalizzata e immutabile del parere. Prima della firma calcolare `SHA-256`; inviare l'hash/documento al QTSP; ricevere PDF PAdES firmato; verificare la firma server-side; memorizzare PDF firmato, hash, timestamp, identificativo transazione di firma e risultato di validazione. La chiave privata del medico non dovrebbe risiedere nella tua infrastruttura. La robustezza della firma qualificata deriva dal quadro eIDAS. citeturn9search7turn9search2
+Non inserirei invece nel codice qualcosa come:
 
-Il pagamento deve essere completamente separato dai dati sanitari. Il PSP riceve per esempio:
+```python
+RETENTION_YEARS = 10
+```
+
+senza prima definire giuridicamente la categoria documentale. Il GDPR impone il principio di limitazione della conservazione: i dati devono essere conservati per un arco di tempo non superiore al necessario rispetto alle finalità, salvo specifici obblighi applicabili. citeturn17search1
+
+Costruirei quindi una policy configurabile:
+
+```text
+account_data
+clinical_case
+clinical_document
+billing_data
+audit_log
+security_log
+temporary_upload
+abandoned_draft
+```
+
+con per ciascuna:
+
+```text
+retention period
+legal basis
+delete/anonymize action
+owner
+legal approval date
+```
+
+Il periodo effettivo per i documenti clinici deve essere approvato dal responsabile legale/DPO e coerente con la natura della prestazione sanitaria.
+
+
+## Contratto API e modello operativo frontend-backend
+
+### Convenzioni API
+
+Il backend espone API JSON versionate:
+
+```text
+https://api.example.it/v1/...
+```
+
+Ogni richiesta sensibile deve avere:
+
+```http
+Authorization: Bearer <token>
+X-Request-ID: <uuid>
+```
+
+Per le operazioni di creazione importanti utilizzerei inoltre:
+
+```http
+Idempotency-Key: <uuid>
+```
+
+in modo che un doppio click o un retry di rete non generi due casi o due revisioni.
+
+L'API dovrebbe essere definita prima nel file OpenAPI e poi implementata. OpenAPI è uno standard indipendente dal linguaggio per descrivere API HTTP; la specifica più recente pubblicata nel 2026 è la famiglia 3.2, mentre per l'MVP utilizzerei `3.1.1` per massimizzare la compatibilità con generatori e tooling esistenti. citeturn12search0turn12search6
+
+### Endpoint principali
+
+Contratto minimo:
+
+| Metodo | Endpoint | Ruolo |
+|---|---|---|
+| `POST` | `/v1/uploads/presign` | patient |
+| `POST` | `/v1/submit-conversation` | patient |
+| `GET` | `/v1/case/{id}` | owner/assigned doctor |
+| `POST` | `/v1/case/{id}/request-information` | doctor |
+| `POST` | `/v1/case/{id}/information` | patient |
+| `POST` | `/v1/doctor/review` | doctor |
+| `GET` | `/v1/doctor/cases` | doctor |
+| `GET` | `/v1/me/cases` | patient |
+| `GET` | `/v1/case/{id}/document` | authorized |
+| `POST` | `/v1/case/{id}/cancel` | patient/admin policy |
+
+### Esempio OpenAPI
+
+```yaml
+openapi: 3.1.1
+
+info:
+  title: Medical AI Verification API
+  version: 0.1.0
+
+servers:
+  - url: https://api.example.it/v1
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /submit-conversation:
+    post:
+      summary: Invia una conversazione ChatGPT per revisione medica
+      operationId: submitConversation
+      tags: [Patient]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitConversationRequest"
+      responses:
+        "201":
+          description: Caso creato
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Case"
+        "401":
+          description: Non autenticato
+        "403":
+          description: Non autorizzato
+        "409":
+          description: Richiesta già elaborata
+        "422":
+          description: Payload non valido
+
+  /case/{id}:
+    get:
+      summary: Restituisce un caso autorizzato
+      operationId: getCase
+      tags: [Case]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Caso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseDetail"
+        "401":
+          description: Non autenticato
+        "403":
+          description: Utente autenticato ma non autorizzato
+        "404":
+          description: Caso non trovato
+
+  /doctor/review:
+    post:
+      summary: Registra la valutazione indipendente del medico
+      operationId: submitDoctorReview
+      tags: [Doctor]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoctorReviewRequest"
+      responses:
+        "201":
+          description: Revisione registrata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "401":
+          description: Non autenticato
+        "403":
+          description: Non medico, MFA insufficiente o caso non assegnato
+        "409":
+          description: Versione del caso non più corrente
+        "422":
+          description: Revisione non valida
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    SubmitConversationRequest:
+      type: object
+      required:
+        - source
+        - patient_attestation
+      properties:
+        source:
+          type: string
+          const: chatgpt
+        conversation_text:
+          type: string
+          maxLength: 100000
+        attachment_id:
+          type: string
+          format: uuid
+        patient_context:
+          type: object
+          properties:
+            age:
+              type: integer
+              minimum: 18
+              maximum: 120
+            sex:
+              type: string
+              enum: [female, male, other, prefer_not_to_say]
+        patient_attestation:
+          type: boolean
+          description: Conferma che il contenuto caricato corrisponde a quello fornito dal paziente
+      oneOf:
+        - required: [conversation_text]
+        - required: [attachment_id]
+
+    Case:
+      type: object
+      required: [id, status, created_at, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - DRAFT
+            - SUBMITTED
+            - ASSIGNED
+            - UNDER_REVIEW
+            - NEEDS_INFORMATION
+            - REVIEWED
+            - CANCELLED
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    CaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Case"
+        - type: object
+          properties:
+            attachments:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  filename:
+                    type: string
+                  mime_type:
+                    type: string
+            review:
+              oneOf:
+                - $ref: "#/components/schemas/Review"
+                - type: "null"
+
+    DoctorReviewRequest:
+      type: object
+      required:
+        - case_id
+        - expected_case_version
+        - outcome
+        - clinical_assessment
+        - attestation
+      properties:
+        case_id:
+          type: string
+          format: uuid
+        expected_case_version:
+          type: integer
+        outcome:
+          type: string
+          enum:
+            - CONFIRMED
+            - MODIFIED
+            - INSUFFICIENT_DATA
+            - NEEDS_DIRECT_EVALUATION
+            - URGENT_EVALUATION
+        clinical_assessment:
+          type: string
+          minLength: 20
+          maxLength: 20000
+        recommended_actions:
+          type: string
+          maxLength: 10000
+        attestation:
+          type: boolean
+          const: true
+
+    Review:
+      type: object
+      required:
+        - id
+        - case_id
+        - doctor_id
+        - outcome
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        doctor_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        document_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+```
+
+### Concorrenza e double-submit del medico
+
+Supponiamo che il medico apra il caso nella versione `7`.
+
+Nel frattempo il paziente aggiunge un documento e il caso diventa versione `8`.
+
+Quando il medico prova a inviare:
 
 ```json
 {
-  "merchant_reference": "pay_01K9...",
-  "amount": 3900,
-  "currency": "EUR",
-  "metadata": {
-    "order_reference": "ord_01K9..."
-  }
+  "case_id": "...",
+  "expected_case_version": 7
 }
 ```
 
-e non:
+il backend deve rispondere:
 
-```json
-{
-  "reason": "verifica dolore toracico e sospetta fibrillazione atriale"
+```http
+409 Conflict
+```
+
+e chiedere di riesaminare il materiale aggiornato.
+
+Questo semplice optimistic locking evita che un medico firmi una valutazione ignorando inconsapevolmente informazioni arrivate durante la compilazione.
+
+### Il frontend non deve essere fonte di autorizzazione
+
+Nascondere un pulsante nel browser non è controllo di accesso.
+
+Quindi:
+
+```typescript
+// corretto come UX, ma NON come sicurezza
+if (user.role !== "DOCTOR") {
+  hideReviewButton();
 }
 ```
 
-La disciplina fiscale, l'eventuale trattamento delle prestazioni mediche e gli obblighi verso i sistemi fiscali/sanitari italiani devono essere un workstream separato con commercialista e legale sanitario prima del go-live.
+deve essere accompagnato sempre da:
 
-## Test, validazione clinica, deployment e monitoraggio
+```python
+# controllo reale sul server
+require_role(user, "DOCTOR")
+require_mfa(user)
+require_assigned_doctor(case, user)
+```
 
-La piattaforma non dovrebbe essere validata soltanto come software. Il prodotto finale è l'interazione fra paziente, workflow, medico e documentazione AI preesistente.
+L'API deve respingere la richiesta anche se un utente costruisce manualmente la chiamata HTTP.
 
-È particolarmente importante perché la letteratura non supporta l'assunzione semplicistica “il medico correggerà sempre l'AI”. Nel trial randomizzato di Goh e colleghi, GPT-4 standalone ottenne un punteggio diagnostico superiore al gruppo di medici con risorse convenzionali, mentre mettere l'LLM a disposizione dei medici non produsse un miglioramento statisticamente significativo del loro reasoning; gli autori sottolinearono però che i casi erano vignette cliniche curate e non misuravano pienamente anamnesi, contesto e acquisizione dei dati reali. citeturn26search0turn26search9
+### Documento conclusivo
 
-Analogamente, uno studio su *Nature* del 2025 mostrò per AMIE una top-10 accuracy del 59,1% contro 33,6% dei clinici non assistiti su casi complessi, ma concluse comunque che era necessaria una valutazione ulteriore in scenari reali. citeturn26search29 Nel 2026 sono stati pubblicati anche lavori sulla diagnosi sequenziale con frontier models, che avvicinano maggiormente il benchmark alla dinamica iterativa del ragionamento diagnostico. citeturn26search2
+Una volta salvata la revisione, il backend dovrebbe creare una versione immutabile:
 
-La metrica clinica del servizio non deve quindi essere:
+```text
+review record
+     ↓
+render template
+     ↓
+PDF
+     ↓
+SHA-256
+     ↓
+object storage
+     ↓
+review_documents
+```
 
-> “Quante volte il medico conferma ChatGPT?”
+Campi minimi:
 
-Una percentuale di conferma del 95% potrebbe indicare ottima AI oppure pericoloso automation bias.
+```text
+document_id
+review_id
+doctor_id
+generated_at
+sha256
+storage_object_key
+template_version
+```
 
-Le metriche devono essere orientate all'esito del processo.
+Non affermerei nel blueprint che una particolare tipologia di firma elettronica sia giuridicamente obbligatoria senza prima definire precisamente il tipo di prestazione e di documento. A livello tecnico, però, identità del medico, timestamp, versione e hash del documento devono essere conservati in modo verificabile.
 
-**Test funzionali minimi:**
 
-| Area | Caso da testare |
+## Repository, Docker e pipeline CI/CD
+
+### Struttura del repository
+
+Per un team piccolo sceglierei un monorepo:
+
+```text
+medical-verification/
+│
+├── apps/
+│   └── web/
+│       ├── app/
+│       ├── components/
+│       ├── lib/
+│       └── package.json
+│
+├── services/
+│   └── api/
+│       ├── app/
+│       │   ├── api/
+│       │   ├── auth/
+│       │   ├── cases/
+│       │   ├── reviews/
+│       │   ├── audit/
+│       │   └── main.py
+│       ├── tests/
+│       ├── requirements.txt
+│       └── Dockerfile
+│
+├── packages/
+│   └── api-client/
+│
+├── infra/
+│   ├── terraform/
+│   └── docker/
+│
+├── docs/
+│   ├── openapi.yaml
+│   ├── architecture/
+│   ├── adr/
+│   └── threat-model/
+│
+├── compose.yaml
+└── .github/
+    └── workflows/
+        ├── ci.yml
+        └── deploy-api.yml
+```
+
+La specifica OpenAPI deve poter generare automaticamente i tipi TypeScript per il frontend. In questo modo il team frontend non riscrive manualmente le interfacce di ogni risposta.
+
+### Dockerfile backend
+
+Esempio di base:
+
+```dockerfile
+# services/api/Dockerfile
+
+FROM python:3.13-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+RUN pip wheel \
+    --wheel-dir /wheels \
+    -r requirements.txt
+
+
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080
+
+RUN groupadd --system app \
+    && useradd --system \
+       --gid app \
+       --home /app \
+       app
+
+WORKDIR /app
+
+COPY --from=builder /wheels /wheels
+
+RUN pip install \
+    --no-cache-dir \
+    /wheels/* \
+    && rm -rf /wheels
+
+COPY app ./app
+
+RUN chown -R app:app /app
+
+USER app
+
+EXPOSE 8080
+
+CMD [
+  "uvicorn",
+  "app.main:app",
+  "--host", "0.0.0.0",
+  "--port", "8080",
+  "--proxy-headers"
+]
+```
+
+Principi:
+
+```text
+MUST: utente non-root
+MUST: nessun secret nell'immagine
+MUST: immagine immutabile
+MUST: dipendenze versionate
+SHOULD: image scanning
+SHOULD: SBOM
+SHOULD: base image aggiornata periodicamente
+```
+
+Cloud Run accetta direttamente immagini container per creare nuove revisioni del servizio. citeturn15search17
+
+### Docker Compose per sviluppo locale
+
+```yaml
+# compose.yaml
+
+services:
+
+  api:
+    build:
+      context: ./services/api
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/medical
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_PATH: /data/uploads
+    volumes:
+      - ./services/api/app:/app/app
+      - local_uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: medical
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U app -d medical"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  local_uploads:
+```
+
+Il `compose.yaml` è esclusivamente per sviluppo. Non è il modello production.
+
+In produzione:
+
+```text
+postgres service in compose
+            ↓
+        RIMOSSO
+
+local_uploads volume
+            ↓
+        RIMOSSO
+```
+
+e sostituito con:
+
+```text
+Cloud SQL
+Cloud Storage
+```
+
+### Configurazione applicativa
+
+L'applicazione deve leggere la configurazione dall'ambiente:
+
+```text
+APP_ENV
+DATABASE_URL
+AUTH_ISSUER
+AUTH_AUDIENCE
+GCP_PROJECT_ID
+STORAGE_BUCKET
+LOG_LEVEL
+ALLOWED_ORIGINS
+```
+
+I secret non devono stare in:
+
+```text
+.git
+Dockerfile
+compose.yaml production
+Next.js public env
+```
+
+Cloud Run può utilizzare Secret Manager per fornire i segreti al servizio senza inserirli nell'immagine. citeturn15search37
+
+### Pipeline per pull request
+
+```mermaid
+flowchart LR
+    PR[Pull Request]
+    LINT[Lint]
+    UT[Unit tests]
+    IT[Integration tests]
+    API[OpenAPI validation]
+    BUILD[Docker build]
+    SCAN[Security scan]
+    PREVIEW[Frontend preview]
+
+    PR --> LINT
+    PR --> UT
+    PR --> IT
+    PR --> API
+    UT --> BUILD
+    BUILD --> SCAN
+    PR --> PREVIEW
+```
+
+Nessuna pull request deve poter fare deploy in produzione.
+
+### Pipeline di deploy
+
+```mermaid
+flowchart LR
+    MAIN[Merge main]
+    TEST[Test]
+    BUILD[Build immagine]
+    REG[Registry]
+    STAGE[Deploy staging]
+    SMOKE[Smoke test]
+    APPROVE[Production gate]
+    PROD[Deploy production]
+
+    MAIN --> TEST
+    TEST --> BUILD
+    BUILD --> REG
+    REG --> STAGE
+    STAGE --> SMOKE
+    SMOKE --> APPROVE
+    APPROVE --> PROD
+```
+
+L'immagine che passa staging deve essere la **stessa immagine per digest** che viene promossa in produzione. Non deve essere ricostruita dopo l'approvazione.
+
+### GitHub Actions
+
+Per l'autenticazione di GitHub verso Google Cloud userei Workload Identity Federation, evitando di salvare nel repository una chiave JSON di service account permanente. Google raccomanda esplicitamente questa modalità per deployment pipeline come GitHub Actions; l'action ufficiale `google-github-actions/auth` indica la federazione come approccio preferenziale rispetto alle chiavi statiche. citeturn23search0turn23search1turn23search7
+
+Esempio:
+
+```yaml
+# .github/workflows/deploy-api.yml
+
+name: Deploy API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/api/**"
+      - ".github/workflows/deploy-api.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SERVICE_NAME: medical-verification-api
+  REGION: europe-west8
+
+jobs:
+
+  test-build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        working-directory: services/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: Lint
+        working-directory: services/api
+        run: ruff check .
+
+      - name: Tests
+        working-directory: services/api
+        run: pytest -q
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker registry
+        run: |
+          gcloud auth configure-docker \
+            "${{ vars.ARTIFACT_REGISTRY_HOST }}" \
+            --quiet
+
+      - name: Build image
+        run: |
+          IMAGE="${{ vars.ARTIFACT_REGISTRY_REPO }}/api:${GITHUB_SHA}"
+          docker build \
+            -t "${IMAGE}" \
+            ./services/api
+          docker push "${IMAGE}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Deploy staging
+        run: |
+          gcloud run deploy "${SERVICE_NAME}-staging" \
+            --image="${IMAGE}" \
+            --region="${REGION}" \
+            --platform=managed \
+            --quiet
+
+      - name: Smoke test
+        run: |
+          ./scripts/smoke-test-staging.sh
+```
+
+L'action ufficiale Google attuale mostra `actions/checkout@v7`, `google-github-actions/auth@v3` e richiede `id-token: write` per Workload Identity Federation. citeturn23search2turn23search6
+
+Per la produzione aggiungerei un GitHub Environment `production` con gate di approvazione e un job separato che utilizza **lo stesso digest** dell'immagine approvata.
+
+In un repository reale, le Actions di terze parti dovrebbero essere bloccate a commit SHA verificati invece di dipendere indefinitamente dal tag major; nel blueprint il tag major rende semplicemente leggibile l'esempio.
+
+### Migrazioni database
+
+Le migrazioni non devono partire automaticamente a ogni startup del container.
+
+Pattern:
+
+```text
+deploy candidate
+      ↓
+migration job
+      ↓
+migration successful?
+      ↓ yes
+deploy application
+```
+
+Ogni migrazione deve avere:
+
+```text
+numero/versione
+forward migration
+strategia rollback o roll-forward
+compatibilità con versione precedente dell'app
+test su staging
+```
+
+Per modifiche critiche adottare il pattern expand/contract:
+
+```text
+1. aggiungi nuova colonna
+2. deploy codice compatibile con vecchio + nuovo
+3. migra dati
+4. passa al nuovo campo
+5. rimuovi vecchio campo in release successiva
+```
+
+Questo evita che una migration renda immediatamente impossibile il rollback dell'applicazione.
+
+
+## Backlog operativo frontend e backend
+
+### Milestone di fondazione
+
+| Area | Task | Acceptance criteria |
+|---|---|---|
+| Architecture | ADR stack tecnologico | scelta frontend hosting, backend, DB, storage documentata |
+| Backend | progetto FastAPI | `/health` restituisce 200; test automatici attivi |
+| Frontend | skeleton Next.js | routing e layout responsive funzionanti |
+| DevOps | Dockerfile | backend builda e parte senza privilegi root |
+| DevOps | Compose | nuovo sviluppatore avvia API + DB con un comando |
+| Security | environments | `dev`, `staging`, `production` completamente separati |
+| Privacy | data inventory | ogni categoria di dati mappata a finalità e sistema |
+| Privacy | DPIA | documento avviato e owner assegnato |
+
+**Definition of Done:** nessun dato reale viene utilizzato; pipeline CI esegue lint, test e build; repository dispone di ADR e documentazione di setup.
+
+### Milestone identità e autorizzazione
+
+| Frontend | Backend | Acceptance criteria |
+|---|---|---|
+| signup/login paziente | verifica JWT | token invalido → 401 |
+| login medico | middleware ruolo | paziente su endpoint medico → 403 |
+| enrollment MFA | verifica claim MFA | medico senza MFA → review bloccata |
+| session expiry UX | session policy | token scaduto → re-auth |
+| pagina profilo | profili DB | ownership corretta |
+| reset account | audit identity events | reset registrato nell'audit |
+
+La piattaforma non è pronta per la milestone successiva finché un test automatico non dimostra che un paziente A non può recuperare il caso del paziente B e che un medico non assegnato non può aprirlo.
+
+### Milestone acquisizione del caso
+
+Frontend:
+
+```text
+Nuovo caso
+→ informativa
+→ inserimento conversazione
+→ upload eventuali file
+→ riepilogo
+→ conferma
+→ submit
+```
+
+Backend:
+
+```text
+POST /uploads/presign
+POST /submit-conversation
+GET /case/{id}
+GET /me/cases
+```
+
+Acceptance criteria:
+
+| Requisito | Test |
 |---|---|
-| Account | Registrazione/login/logout/recovery |
-| Identity | Identità non verificata non può submit |
-| Upload | MIME falso |
-| Upload | File troppo grande |
-| Upload | Malware |
-| Upload | Upload incompleto |
-| Integrity | Hash non corrispondente |
-| Case state | Transizione illegale |
-| Assignment | Medico non assegnato tenta accesso |
-| Messaging | Paziente B tenta leggere messaggi A |
-| Opinion | Firma di draft non finalizzato |
-| Opinion | Modifica dopo firma |
-| Addendum | Preserva versione precedente |
-| Payment | Webhook duplicato |
-| Payment | Pagamento fallito |
-| Payment | Refund |
-| Signature | QTSP down |
-| Notifications | Nessun dato clinico in email |
-| Privacy | Export del paziente corretto |
-| Audit | Ogni view sensibile genera evento |
+| ownership | altro paziente riceve 403/404 |
+| idempotenza | doppio submit genera un solo caso |
+| upload | file va direttamente allo storage |
+| private storage | object URL pubblico non funziona |
+| audit | submit genera evento |
+| integrity | SHA-256 registrato |
+| file validation | MIME/size non ammessi respinti |
+| logging | nessun testo clinico nei log |
 
-**Test di sicurezza.** Prima del pilot reale eseguirei almeno SAST, dependency scanning, secrets scanning, IaC scanning, DAST e penetration test indipendente. Il pentest deve includere specificamente IDOR/BOLA, escalation di privilegi, upload malevoli, stored XSS nei testi caricati, parser PDF, CSRF, session fixation, reset account, webhook replay, accesso a URL firmati scaduti, brute force, SSRF e possibilità per un medico di enumerare casi non assegnati.
+### Milestone dashboard medico
 
-Un criterio di go-live sensato sarebbe: nessuna vulnerabilità critica aperta; nessuna high non mitigata senza approvazione formale di Security e titolare del rischio.
+Frontend:
 
-**Test privacy:**
+```text
+Lista casi assegnati
+→ filtri stato
+→ dettaglio
+→ conversazione originale
+→ allegati
+→ richiesta informazioni
+→ form di revisione
+```
+
+Backend:
+
+```text
+GET /doctor/cases
+GET /case/{id}
+POST /case/{id}/request-information
+POST /doctor/review
+```
+
+Acceptance criteria:
+
+```text
+MUST MFA
+MUST verified_doctor = true
+MUST assigned_doctor_id == current_user
+MUST optimistic locking
+MUST audit case_opened
+MUST audit review_submitted
+```
+
+Un medico non assegnato deve ottenere `403` anche conoscendo esattamente l'UUID del caso.
+
+### Milestone comunicazione medico-paziente
+
+Il sistema deve supportare la richiesta di integrazioni senza trasformarsi necessariamente in una chat generalista.
+
+Struttura:
+
+```text
+Doctor:
+"Per valutare il caso servono le seguenti informazioni..."
+
+Patient:
+risponde / carica documento
+
+Case version:
+7 → 8
+```
+
+Acceptance criteria:
+
+| Scenario | Risultato |
+|---|---|
+| medico richiede integrazione | stato `NEEDS_INFORMATION` |
+| paziente risponde | stato torna `UNDER_REVIEW` |
+| nuova informazione | `case.version` incrementa |
+| medico aveva review aperta | submit vecchia versione → `409` |
+| notifica email | nessun contenuto clinico nell'email |
+
+L'email deve dire, ad esempio:
+
+> “È disponibile un aggiornamento sul tuo caso.”
+
+non:
+
+> “Il cardiologo chiede ulteriori informazioni per la sospetta fibrillazione atriale.”
+
+### Milestone revisione e documento finale
+
+Frontend medico deve offrire esiti strutturati:
+
+```text
+Confermo sostanzialmente
+Modifico le conclusioni
+Informazioni insufficienti
+Necessaria valutazione diretta
+Necessaria valutazione urgente
+```
+
+La terminologia finale deve essere validata clinicamente e legalmente.
+
+Backend:
+
+```text
+Review immutable version
+PDF generation
+document hash
+audit
+patient availability
+```
+
+Acceptance criteria:
 
 | Test | Criterio |
 |---|---|
-| Support agent apre contenuto clinico | Negato |
-| Medico non assegnato apre caso | Negato + audit |
-| Clinician scarica bulk dataset | Negato |
-| Dati sanitari nei log | Zero |
-| Dati sanitari nei crash report | Zero |
-| PHI in analytics | Zero |
-| PHI nei metadati PSP | Zero |
-| PHI nelle notifiche | Zero |
-| Prod DB disponibile a developer ordinario | No |
-| Dati prod copiati in staging | No |
-| DSAR export | Completo e verificato |
-| Retention job | Testato |
-| Delete temp files | Testato |
+| completezza | review senza assessment respinta |
+| concorrenza | versione case errata → 409 |
+| immutabilità | review firmata non modificabile in-place |
+| nuova versione | correzione crea nuova revision |
+| documento | hash coincide col PDF |
+| autorizzazione | solo paziente/medico autorizzato lo scaricano |
 
-**Pilot clinico.** Lo dividerei in tre fasi.
+### Milestone hardening
 
-La prima usa solo casi sintetici e casi storici de-identificati idonei allo scopo: serve a verificare UX e SOP, non a dimostrare efficacia clinica.
+Prima di utilizzare pazienti reali devono essere completati:
 
-La seconda è un closed pilot con casistica reale rigorosamente non urgente e un numero limitato di medici. Ogni caso viene valutato secondo il workflow standard; un campione viene sottoposto a seconda revisione indipendente.
-
-La terza è il controlled launch con monitoraggio settimanale del Clinical Safety Board.
-
-Qualora il pilot venga trasformato in attività di ricerca scientifica sistematica destinata, ad esempio, a produrre conoscenza generalizzabile o pubblicazioni, andrà svolta separatamente l'analisi etica, privacy e regolatoria relativa alla ricerca. La legge 132/2025 contiene disposizioni specifiche anche sul trattamento dei dati per ricerca e sperimentazione di sistemi AI sanitari, che non vanno confuse con il trattamento ordinario necessario all'erogazione del servizio. citeturn20view1
-
-**Metriche cliniche proposte:**
-
-| Metrica | Perché conta |
+| Dominio | Gate |
 |---|---|
-| `% insufficient information` | Adeguatezza del canale asincrono |
-| `% visita richiesta` | Limiti della revisione documentale |
-| `% concordanza totale AI-medico` | Descrittiva, non quality KPI |
-| `% concordanza parziale` | Descrittiva |
-| `% disaccordo` | Descrittiva |
-| `% escalation urgente` | Sicurezza |
-| Tempo da detection umana a contatto | Sicurezza |
-| Casi urgenti non riconosciuti al primo review | Critical safety metric |
-| Concordanza medico-reviewer indipendente | Qualità |
-| Addendum/correzioni | Qualità documentale |
-| Reclami clinici | Outcome |
-| Adverse events | Safety |
-| Tempo medio per caso | Economics/operations |
-| Numero medio richieste integrazione | UX |
-| Abbandono pre-submit | UX |
-| Tasso rimborsi/out-of-scope | Scope quality |
-| Patient understanding score | Comunicazione |
-| Download/apertura del parere | Delivery |
+| DPIA | approvata |
+| DPA | fornitori mappati |
+| Subprocessors | registro disponibile |
+| MFA | obbligatoria medico/admin |
+| Secrets | assenti dal repository |
+| DB | non pubblicamente accessibile |
+| Storage | accesso pubblico disabilitato |
+| Encryption | verificata |
+| Audit | copertura degli eventi critici |
+| Backup | restore eseguito con successo |
+| Retention | policy approvata |
+| Incident response | runbook testato |
+| Security | penetration test / security review |
+| Monitoring | alert errori e disponibilità |
+| Staging | nessun dato paziente reale |
+| Logging | test automatici contro PHI leakage |
 
-In un sottoinsieme del pilot farei doppia revisione indipendente e, in caso di disaccordo clinicamente rilevante, adjudication da un terzo medico.
+Il Garante evidenzia esplicitamente che privacy by design richiede misure appropriate fin dalla progettazione e revisioni periodiche della sicurezza, inclusa una procedura per le violazioni di dati personali ai sensi degli articoli 33 e 34 GDPR. citeturn20view0
 
-**Stop rules** da definire prima del primo paziente reale:
+### Milestone pilot
 
-```text
-- sospetta omissione di un'emergenza con potenziale danno grave
-- accesso non autorizzato sistematico a dati sanitari
-- perdita di integrità dei pareri firmati
-- impossibilità di ricostruire chi ha visto/modificato un caso
-- compromissione di credenziali cliniche privilegiata
-- errore sistematico nel routing dei casi
-- evidenza di workflow che induce conferma automatica dell'AI
-```
-
-La decisione di sospensione deve essere attribuita formalmente a un Medical Safety Officer e a un Security/Privacy owner secondo la natura dell'evento.
-
-**CI/CD.** La pipeline dovrebbe avere:
+Il pilot deve misurare almeno:
 
 ```text
-Pull Request
-  ↓
-Unit tests
-  ↓
-Contract/API tests
-  ↓
-SAST
-  ↓
-Dependency/SBOM scan
-  ↓
-Secrets scan
-  ↓
-IaC scan
-  ↓
-Build immutabile
-  ↓
-Firma artefatto/container
-  ↓
-Deploy staging
-  ↓
-Integration tests
-  ↓
-Security smoke tests
-  ↓
-Manual approval per release clinicamente rilevante
-  ↓
-Production
+completion rate
+tempo submit → assegnazione
+tempo medico per review
+percentuale NEEDS_INFORMATION
+percentuale INSUFFICIENT_DATA
+percentuale NEEDS_DIRECT_EVALUATION
+error rate API
+upload failure rate
+login/MFA failure rate
+numero accessi admin eccezionali
+incidenti privacy/security
 ```
 
-Una feature che modifica qualsiasi elemento clinicamente rilevante deve richiedere anche **Regulatory/Clinical change approval**.
-
-Aggiungerei nel repository un `REGULATORY_IMPACT.md` per ogni release:
+Aggiungerei fin dall'inizio un indicatore clinicamente molto importante:
 
 ```text
-Does this release:
-[ ] interpret clinical data?
-[ ] summarize clinical data?
-[ ] generate clinical recommendations?
-[ ] prioritize cases based on symptoms?
-[ ] detect red flags?
-[ ] change the medical opinion template?
-[ ] add an AI model?
-[ ] change the AI model/version?
-[ ] change a data processor?
-[ ] change a data location?
-[ ] change retention?
-[ ] change authentication?
-
-If YES → mandatory review.
+AI conclusion vs physician conclusion
 ```
 
-Questa semplice disciplina evita che sei mesi dopo un developer introduca “una piccola funzione di AI summarization” che cambia sostanzialmente la posizione MDR.
+con categorie strutturate:
 
-**Ambienti.**
+```text
+agree
+partially agree
+disagree
+insufficient information
+```
 
-| Ambiente | Dati ammessi | Accesso |
+ma **senza usare queste informazioni per addestrare automaticamente alcun modello**. Qualsiasi riuso secondario del dataset clinico richiederebbe una propria valutazione di finalità, base giuridica e governance; il Garante segnala espressamente che utilizzi ulteriori dei dati raccolti dalla piattaforma non possono essere considerati automaticamente compatibili con la finalità originaria. citeturn18view0
+
+
+## Decisione raccomandata e specifica da consegnare ai team
+
+### Stack finale consigliato
+
+Per la versione che svilupperei oggi:
+
+```text
+                         INTERNET
+                            │
+                            ▼
+                ┌──────────────────────┐
+                │   Next.js frontend   │
+                │ Vercel oppure GCP    │
+                └──────────┬───────────┘
+                           │
+             auth          │ API
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  │
+┌───────────────┐  ┌────────────────────┐     │
+│ Identity      │  │ FastAPI            │     │
+│ Platform      │  │ Docker             │     │
+│ MFA / OIDC    │  │ Cloud Run Milano   │     │
+└───────────────┘  └──────────┬─────────┘     │
+                              │               │
+                     ┌────────┴────────┐      │
+                     ▼                 ▼      │
+             ┌───────────────┐ ┌─────────────┴────┐
+             │ Cloud SQL     │ │ Cloud Storage     │
+             │ PostgreSQL    │ │ documenti         │
+             │ Milano        │ │ privati           │
+             └───────────────┘ └──────────────────┘
+```
+
+Cloud Run è disponibile a Milano e permette di distribuire direttamente container; Cloud SQL PostgreSQL è disponibile nella stessa regione, e Cloud Storage dispone sia di Milano sia di Torino. Questa combinazione consente di collocare il core sanitario in Italia senza dover amministrare macchine virtuali. citeturn16search2turn22search1turn22search3
+
+### Frontend: Vercel sì o no?
+
+**La mia raccomandazione pratica è sì, ma con un confine preciso.**
+
+Userei Vercel per:
+
+```text
+Next.js
+static assets
+routing
+frontend deployment
+preview environment con dati sintetici
+```
+
+Eviterei di far transitare da Vercel Functions:
+
+```text
+PDF clinici
+conversazioni ChatGPT
+review del medico
+referti
+allegati
+```
+
+quando non necessario.
+
+Questo permette di beneficiare del workflow frontend di Vercel senza trasformarlo nel principale data plane sanitario.
+
+Se il DPO o la governance aziendale preferiscono minimizzare i fornitori, spostare Next.js su Cloud Run non richiede una modifica concettuale del backend.
+
+### Backend: container oppure serverless?
+
+La risposta apparentemente paradossale è:
+
+> **Cloud Run è entrambe le cose utili al progetto: esegue un container Docker, ma l'infrastruttura è gestita in modalità serverless.**
+
+Non dobbiamo quindi scegliere necessariamente tra “Docker” e “serverless”.
+
+Possiamo avere:
+
+```text
+Docker
+   +
+serverless infrastructure
+   =
+Cloud Run
+```
+
+È esattamente il compromesso che sceglierei.
+
+Lo sviluppatore ha un artefatto portabile e riproducibile; l'azienda non deve amministrare una VM sempre accesa.
+
+### Perché non Vercel Functions per tutto
+
+Potremmo farlo, ed è probabilmente l'MVP tecnicamente più rapido.
+
+Non lo preferisco per il core sanitario perché:
+
+| Tema | Vercel-only | Cloud Run backend |
 |---|---|---|
-| Local | Synthetic | Developer |
-| CI | Synthetic | Pipeline |
-| Dev | Synthetic | Engineering |
-| Staging | Synthetic/pseudonymized test data autorizzato | Engineering/QA |
-| Production | Real health data | JIT/need-to-know |
-| Security sandbox | Synthetic | Security |
+| Setup | più semplice | leggermente maggiore |
+| Docker necessario | no | sì |
+| Portabilità backend | minore | maggiore |
+| Upload grande | diretto a storage obbligato | comunque consigliato |
+| Runtime control | più vincolato | maggiore |
+| Python/FastAPI | possibile | naturale |
+| Processi futuri | più dipendenti dal modello Functions | più flessibili |
+| Core sanitario in Milano | non la scelta naturale | sì |
+| DB + storage stesso cloud | dipende dai provider | sì |
+| Future worker/job | maggiore adattamento | Cloud Run ecosystem |
+| Vendor governance | può diventare multi-provider | più centralizzata |
 
-Non farei mai `pg_dump production → staging`.
+Vercel Functions hanno inoltre il limite documentato di 4,5 MB per request/response, mentre il suo nuovo runtime container è ancora Beta al 27 ottobre 2026. citeturn21search1turn15search0
 
-**Osservabilità.** Devono essere monitorati:
+### Stima economica corretta
 
-```text
-Tecnici
-- API latency
-- 5xx rate
-- DB saturation
-- object-storage errors
-- queue lag
-- failed malware scans
-- signature-provider failures
-- payment-provider failures
+Non darei ai dipendenti una cifra tipo “costerà €100 al mese”, perché sarebbe falsa precisione prima di conoscere database sizing, HA, traffico, retention e logging.
 
-Security
-- failed logins
-- MFA failures
-- unusual exports
-- break-glass events
-- repeated denied object access
-- admin privilege changes
-
-Clinical operations
-- age of oldest unassigned case
-- cases awaiting physician
-- cases awaiting patient reply
-- cases beyond SLA
-- escalations open
-
-Privacy
-- privileged clinical reads
-- DSAR queue
-- retention failures
-- processor incidents
-```
-
-Le metriche operative devono contenere ID pseudonimi e non descrizioni cliniche.
-
-**Backup e disaster recovery.** Baseline consigliata:
-
-| Componente | Protezione |
-|---|---|
-| PostgreSQL | PITR + snapshot cifrati |
-| Object storage | Versioning + backup immutabile |
-| Audit | Storage append-only separato |
-| Keys | Recovery procedure dedicata |
-| IaC | Git + artefact registry |
-| Signed opinions | Repliche EEA |
-| Restore | Test periodico obbligatorio |
-
-Come target iniziali interni, non come obblighi normativi, userei `RPO ≤ 15 minuti` per il database clinico e `RTO ≤ 4 ore`. Il servizio resta comunque **non utilizzabile per emergenze anche quando perfettamente operativo**.
-
-L'European Health Data Space è inoltre da mantenere nella regulatory watchlist: il Regolamento EHDS è entrato in vigore nel 2025 e molte disposizioni operative si applicano progressivamente negli anni successivi; per un MVP di document review non lo considererei il driver architetturale primario, ma se il prodotto evolvesse in un vero EHR o interoperasse sistematicamente con FSE e sistemi sanitari, il tema diverrebbe molto più rilevante. citeturn16search1turn16search2
-
-## Roadmap, milestones e checklist di go-live
-
-La roadmap seguente assume un piccolo team dedicato: Tech Lead/backend, frontend, product designer, Medical Director, regulatory/legal counsel, privacy/DPO support e security specialist. I tempi sono **stime di pianificazione**, non includono eventuali tempi di rilascio di autorizzazioni amministrative da parte delle autorità regionali.
-
-| Deliverable | Owner primario | Tempo indicativo | Priorità | Dipendenza |
-|---|---|---:|---:|---|
-| Definizione servizio e scope clinico | Medical Director + Product | 1 settimana | P0 | Nessuna |
-| Intended-purpose statement | Regulatory + Product | 1 settimana | P0 | Scope |
-| MDR qualification memo | Regulatory counsel | 2–3 settimane | P0 | Intended purpose |
-| Analisi AI Act | Regulatory counsel | 1–2 settimane | P0 | MDR |
-| Inquadramento legge 132/2025 | Legal/Medical | 1 settimana | P0 | Scope |
-| Regional authorization memo | Healthcare counsel | 2–6+ settimane | P0 | Regione scelta |
-| Operating entity model | Corporate/health legal | 2 settimane | P0 | Regional memo |
-| Insurance/risk review | Legal + Medical | 2 settimane | P0 | Operating model |
-| Privacy role matrix | Privacy counsel/DPO | 1–2 settimane | P0 | Operating model |
-| Data map | Privacy + Tech | 1 settimana | P0 | Architecture |
-| DPIA v1 | DPO/Privacy + Tech | 3–5 settimane | P0 | Data map |
-| Vendor due diligence | Privacy/Security | 2–4 settimane | P0 | Vendor shortlist |
-| Clinical SOP | Medical Director | 2–3 settimane | P0 | Scope |
-| Emergency escalation SOP | Medical Director | 1–2 settimane | P0 | Clinical SOP |
-| UX prototype | Product/Frontend | 2–3 settimane | P0 | Scope |
-| Backend core | Backend | 6–8 settimane | P0 | Architecture |
-| Patient frontend | Frontend | 5–7 settimane | P0 | UX |
-| Physician workspace | Frontend/Backend | 5–7 settimane | P0 | UX |
-| Audit subsystem | Backend/Security | 3–4 settimane | P0 | Auth |
-| File security pipeline | Backend/Security | 2–3 settimane | P0 | Storage |
-| QTSP integration | Backend | 2–3 settimane | P0 | Vendor |
-| PSP integration | Backend | 1–2 settimane | P0 | Vendor |
-| Physician credentialing | Clinical Ops | 2–3 settimane | P0 | SOP |
-| Terms/privacy/service docs | Legal | 3–4 settimane | P0 | Model/DPIA |
-| Functional QA | QA | 2 settimane | P0 | Build |
-| Penetration test | Independent Security | 1–2 settimane | P0 | Release candidate |
-| DPIA final review | DPO/Privacy | 1 settimana | P0 | Pen test |
-| Synthetic clinical test | Medical | 1–2 settimane | P0 | RC |
-| Closed live pilot | Medical/Product | 3–4 settimane | P0 | All gates |
-| Pilot safety review | Clinical Board | 1 settimana | P0 | Pilot |
-| Controlled launch | Product/Legal/Medical | 1–2 settimane | P0 | Go/no-go |
-| API AI feasibility study | Regulatory + AI team | Post-MVP | P2 | Real-world data |
-| Automated clinical features | Separate regulated programme | Post-MVP | P2 | MDR/AI Act assessment |
-
-In termini puramente ingegneristici, un MVP può essere costruito in circa due mesi con lavoro parallelo; **il critical path reale è normativo**, soprattutto inquadramento regionale, DPIA, contratti, assicurazione e pen-test. Un'autorizzazione amministrativa, se necessaria, può spostare il go-live indipendentemente dallo stato del software.
-
-**Timeline Mermaid illustrativa, con avvio convenzionale il 2 novembre 2026:**
-
-```mermaid
-gantt
-    title Roadmap indicativa MVP - avvio 2 novembre 2026
-    dateFormat  YYYY-MM-DD
-
-    section Regulatory
-    Scope e intended purpose          :crit, r1, 2026-11-02, 14d
-    MDR e AI Act assessment           :crit, r2, after r1, 21d
-    Inquadramento regionale           :crit, r3, 2026-11-02, 45d
-    Contratti e assicurazione         :r4, after r1, 28d
-
-    section Privacy
-    Data map e role matrix            :crit, p1, 2026-11-09, 14d
-    DPIA                              :crit, p2, after p1, 35d
-    Vendor due diligence              :p3, 2026-11-16, 28d
-
-    section Product
-    UX e clinical workflow            :crit, x1, 2026-11-02, 21d
-    Frontend                          :x2, after x1, 49d
-    Backend                           :x3, 2026-11-16, 56d
-    Firma e pagamenti                 :x4, 2026-12-07, 21d
-
-    section Security
-    Hardening                         :s1, 2026-12-21, 28d
-    Penetration test                  :crit, s2, after s1, 14d
-    Remediation                       :crit, s3, after s2, 14d
-
-    section Clinical
-    SOP e training medici             :c1, 2026-11-16, 28d
-    Synthetic validation              :c2, 2027-01-18, 14d
-    Closed pilot                      :crit, c3, after c2, 28d
-    Clinical safety review            :crit, c4, after c3, 7d
-
-    section Launch
-    Go-live review                    :crit, g1, after c4, 7d
-    Controlled launch                 :g2, after g1, 14d
-```
-
-**MDR firewall da introdurre formalmente nel processo di sviluppo.** Ogni ticket contenente una delle seguenti categorie deve essere automaticamente portato al Regulatory Owner prima dell'implementazione:
-
-`diagnosis`, `differential`, `triage`, `red flag`, `clinical priority`, `risk score`, `prognosis`, `therapy`, `AI summary`, `recommendation`, `clinical classification`, `medical NLP`.
-
-Non si tratta di proibire per sempre tali funzioni; significa semplicemente che **aggiungerle trasforma potenzialmente il prodotto**.
-
-La Commissione e MDCG hanno costruito l'inquadramento proprio intorno alla destinazione d'uso e alle funzioni che trasformano dati in informazione clinicamente significativa. citeturn21view1turn21view2
-
-**Checklist legale e operativa prima del primo paziente reale:**
-
-| Gate | Condizione di go-live | Owner | Priorità |
-|---|---|---|---:|
-| MDR | Qualification memo formalmente approvato | Regulatory | P0 |
-| Claims | Landing e marketing coerenti con memo MDR | Legal/Product | P0 |
-| AI | Nessuna funzione AI clinica non approvata | Tech/Regulatory | P0 |
-| Regione | Titolo/autorizzazione/comunicazione definiti | Healthcare Legal | P0 |
-| Prestazione | Denominazione giuridica validata | Healthcare Legal | P0 |
-| Entity | Soggetto erogatore definito | Legal | P0 |
-| Medici | Contratti professionali firmati | Legal | P0 |
-| Abilitazione | Iscrizione verificata | Clinical Ops | P0 |
-| Assicurazione | Copertura verificata | Legal/Medical | P0 |
-| SOP clinica | Approvata | Medical Director | P0 |
-| Emergency SOP | Testata | Medical Director | P0 |
-| Privacy roles | Controller/processor matrix conclusa | DPO/Legal | P0 |
-| DPIA | Approvata | Titolare/DPO | P0 |
-| Art. 28 | DPA con tutti i processors | Privacy | P0 |
-| Transfers | Inventario completo | Privacy | P0 |
-| Retention | Policy approvata | Privacy/Legal/Medical | P0 |
-| DSAR | Procedura testata | Privacy | P0 |
-| Incident | Data-breach SOP testata | Security/DPO | P0 |
-| NIS2 | Applicability assessment concluso | Security/Legal | P1 |
-| IAM | MFA medici/admin attiva | Security | P0 |
-| RBAC/ABAC | Test di accesso negativo superati | Security | P0 |
-| Audit | Letture e scritture sensibili tracciate | Security | P0 |
-| Upload | Malware pipeline attiva | Security | P0 |
-| Encryption | At-rest/in-transit verificata | Security | P0 |
-| Backups | Restore realmente testato | SRE | P0 |
-| Pen-test | Nessun critical aperto | Security | P0 |
-| Firma | QTSP e verifica PDF testati | Backend/Legal | P0 |
-| Payment | Refund/out-of-scope testati | Backend/Ops | P0 |
-| Notifications | Nessun PHI in SMS/email | Privacy/QA | P0 |
-| Pilot | Safety review completata | Clinical Board | P0 |
-| OpenAI external | Informativa corretta sul servizio esterno | Legal/Privacy | P0 |
-| Trademark | Uso “ChatGPT” e non-affiliazione verificati | Legal | P1 |
-| Consumer law | T&C, recesso/rimborsi e precontrattuale validati | Legal | P0 |
-| Fiscal | Fatturazione/prestazione sanitaria validata | Tax/Legal | P0 |
-
-**Checklist aggiuntiva solo se in futuro vengono integrate API OpenAI o altro LLM:**
-
-| Gate AI | Go/no-go |
-|---|---|
-| Nuovo MDR qualification assessment | Obbligatorio |
-| Rule 11 analysis | Obbligatorio se output clinicamente rilevante |
-| Manufacturer role assessment | Obbligatorio |
-| AI Act role assessment | Obbligatorio |
-| High-risk determination | Obbligatoria |
-| Aggiornamento DPIA | Obbligatorio |
-| Art. 7 legge 132/2025 patient notice | Obbligatorio ove applicabile |
-| DPA AI provider | Obbligatorio |
-| Transfer assessment | Obbligatorio |
-| Endpoint-specific retention analysis | Obbligatorio |
-| EU residency verification | Obbligatorio se dichiarata |
-| No-training contractual check | Obbligatorio |
-| Subprocessor review | Obbligatorio |
-| Model-version governance | Obbligatorio |
-| Validation dataset | Obbligatorio |
-| Clinical performance validation | Obbligatoria |
-| Bias/subgroup analysis | Obbligatoria nel risk framework |
-| Prompt-injection threat model | Obbligatorio |
-| AI output provenance | Obbligatorio |
-| Human override | Obbligatorio |
-| Change/revalidation policy | Obbligatoria |
-
-L'architettura che emerge è quindi volutamente **human-first**:
+Darei invece questo modello:
 
 ```text
-ChatGPT del paziente
-        │
-        │ nessuna integrazione
-        ▼
-documento fornito dal paziente
-        │
-        ▼
-piattaforma sicura
-(storage + comunicazione + workflow)
-        │
-        ▼
-MEDICO
-        │
-        ├── concorda
-        ├── corregge
-        ├── chiede informazioni
-        ├── richiede visita/esami
-        ├── identifica urgenza
-        └── dichiara impossibilità di valutazione
-        │
-        ▼
-parere medico firmato
+COSTO MENSILE =
+frontend
++ API compute
++ PostgreSQL
++ object storage
++ backup
++ egress
++ authentication
++ monitoring/logging
++ security/networking
 ```
 
-Questa configurazione conserva il valore commerciale dell'idea — **trasformare la consultazione spontanea di ChatGPT in un accesso rapido a una revisione professionale** — senza introdurre, nell'MVP, un secondo sistema diagnostico proprietario.
+Per il compute abbiamo già ordini di grandezza verificabili:
 
-La scelta è particolarmente razionale alla luce della letteratura più recente: l'evidenza che frontier LLM possano raggiungere o superare medici in specifici compiti diagnostici rende il servizio interessante, ma non trasforma automaticamente un output AI in una diagnosi clinica completa né elimina i problemi di acquisizione dei dati, contesto, esame obiettivo e responsabilità. Gli stessi studi che mostrano risultati diagnostici molto elevati insistono sulla necessità di valutazioni real-world e sull'importanza del modo in cui uomo e modello interagiscono. citeturn26search0turn26search29turn26search2
+| Servizio | Baseline indicativa |
+|---|---:|
+| Vercel Pro | $20/mese + usage |
+| Railway Pro | minimo circa $20/mese + eventuale usage |
+| Cloud Run 0,5 vCPU + 1 GiB sempre attivo | circa $28,51/mese compute-only |
+| Fargate 0,5 vCPU + 1 GB, usando esempio tariffario us-east-1 | circa $17,77/mese compute-only |
+| Render | tariffazione per istanza + servizi |
+| Azure ACI | vCPU/RAM al secondo |
 
-Dal punto di vista regolatorio, la separazione è altrettanto netta: il software che **trasmette e documenta una decisione umana** ha una posizione molto diversa dal software che **interpreta dati e produce informazioni usate per la decisione diagnostica**. È precisamente questa distinzione che emerge dalla MDCG 2019-11 rev.1 e dalla Regola 11 MDR. citeturn21view1turn21view2turn3view2
+Le basi tariffarie sono quelle pubblicate dai rispettivi provider; Fargate e Cloud Run variano per regione/configurazione e vanno finalizzati con i loro calculator prima dell'acquisto. citeturn21search2turn16search0turn16search2turn16search3
 
-La baseline di prodotto che consegnerei quindi contemporaneamente a frontend, backend e legale è:
+Nel nostro progetto, a basso traffico **il database gestito e le caratteristiche di resilienza possono incidere più del container API**, quindi non ottimizzerei prematuramente pochi dollari di compute sacrificando isolamento e governance.
 
-> **MVP = piattaforma sanitaria asincrona di revisione professionale, senza AI interna, senza triage automatico, senza interpretazione algoritmica dei dati, con decisione esclusivamente medica, audit completo, DPIA, firma qualificata, workflow di escalation e possibilità strutturale di dichiarare che la diagnosi non può essere confermata a distanza.**
+### Architecture Decision Record da approvare
 
-Solo dopo aver dimostrato sicurezza operativa e domanda di mercato avrebbe senso aprire un secondo programma di prodotto per l'integrazione API. In quel momento l'AI non sarebbe più un documento che arriva dall'esterno: diventerebbe un componente della piattaforma e richiederebbe una nuova valutazione MDR, AI Act, legge 132/2025 e GDPR prima del rilascio.
+Il documento `docs/adr/0001-production-architecture.md` dovrebbe contenere:
+
+```markdown
+# ADR: Production architecture
+
+Status: Proposed
+
+## Decision
+
+Frontend:
+- Next.js
+- Vercel optional
+- no clinical SSR / server-side processing on Vercel by default
+
+Backend:
+- FastAPI
+- Docker OCI image
+- Google Cloud Run
+- region europe-west8
+
+Database:
+- Cloud SQL PostgreSQL
+- region europe-west8
+
+Documents:
+- private Cloud Storage
+- Italian region
+- direct signed uploads
+
+Authentication:
+- Google Identity Platform
+- MFA mandatory for doctors/admins
+
+CI/CD:
+- GitHub Actions
+- Workload Identity Federation
+- immutable container promotion
+
+MVP boundary:
+- no AI inference
+- no automated diagnosis
+- no automated clinical triage
+- patient supplies ChatGPT conversation
+- physician performs independent review
+
+Production gates:
+- DPIA
+- DPA/subprocessor inventory
+- restore test
+- security review
+- audit coverage
+- approved retention policy
+```
+
+### Definition of Done dell'intero MVP
+
+Il prodotto è tecnicamente pronto a entrare nel processo di go-live solo quando questo scenario passa end-to-end:
+
+```text
+Paziente crea account
+        ↓
+verifica identità/account
+        ↓
+crea caso
+        ↓
+ottiene signed upload URL
+        ↓
+carica conversazione/documenti
+        ↓
+conferma submit
+        ↓
+caso registrato + audit
+        ↓
+assegnazione a medico verificato
+        ↓
+medico autentica con MFA
+        ↓
+apre esclusivamente il proprio caso
+        ↓
+richiede eventuale integrazione
+        ↓
+paziente risponde
+        ↓
+versione del caso incrementata
+        ↓
+medico inserisce valutazione indipendente
+        ↓
+optimistic lock verificato
+        ↓
+review immutabile
+        ↓
+PDF + hash
+        ↓
+audit event
+        ↓
+paziente autenticato visualizza documento
+        ↓
+nessun dato clinico presente nei log
+```
+
+A questo si aggiungono i gate organizzativi: DPIA, accordi ex articolo 28 ove applicabili, mappa dei sub-responsabili, policy di retention, procedura data breach e misure di sicurezza verificate. Il Garante considera espressamente la piattaforma un soggetto che può agire come responsabile per conto del professionista nell'archiviazione e conservazione della documentazione sanitaria, e richiede che tali rapporti e misure siano formalizzati correttamente. citeturn19view1turn20view0
+
+**Decisione architetturale finale:** per il core della piattaforma sceglierei **FastAPI containerizzato con Docker su Google Cloud Run a Milano, PostgreSQL su Cloud SQL a Milano e documenti in Cloud Storage privato italiano; Next.js può partire su Vercel purché il contenuto clinico venga recuperato direttamente dal backend sanitario e non elaborato inutilmente dalle Vercel Functions.** Docker rimane quindi nel progetto non perché “serve un server Docker”, ma perché costituisce l'artefatto standard e riproducibile del backend che Cloud Run esegue. Vercel-only/serverless resta una valida alternativa più semplice, ma non è quella che sceglierei come architettura di riferimento per una piattaforma destinata a gestire stabilmente dati sanitari.
