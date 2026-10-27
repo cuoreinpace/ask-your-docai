@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional
 from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class UserRole(str, Enum):
@@ -10,12 +11,6 @@ class UserRole(str, Enum):
     SUPPORT = "SUPPORT"
     PRIVACY = "PRIVACY"
     ADMIN = "ADMIN"
-
-
-class IdentityLevel(str, Enum):
-    BASIC = "BASIC"
-    VERIFIED = "VERIFIED"
-    STRONG = "STRONG"
 
 
 class CaseStatus(str, Enum):
@@ -60,17 +55,6 @@ class OpinionStatus(str, Enum):
     SUPERSEDED_BY_ADDENDUM = "SUPERSEDED_BY_ADDENDUM"
 
 
-class SourceType(str, Enum):
-    USER_UPLOAD = "USER_UPLOAD"
-    USER_PASTED_TEXT = "USER_PASTED_TEXT"
-
-
-class MalwareScanStatus(str, Enum):
-    PENDING = "PENDING"
-    CLEAN = "CLEAN"
-    REJECTED = "REJECTED"
-
-
 class UserCreate(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=8)
@@ -93,10 +77,21 @@ class UserResponse(BaseModel):
     created_at: str
 
 
+class AuthResponse(UserResponse):
+    token: str
+
+
+class CaseSourceInput(BaseModel):
+    declared_provider: str = "ChatGPT"
+    source_type: str = "USER_PASTED_TEXT"
+    provenance_verified: bool = False
+    pasted_text: Optional[str] = None
+
+
 class CaseCreate(BaseModel):
     service_code: str = "AI_CONVERSATION_MEDICAL_REVIEW"
-    patient_summary: str = Field(..., max_length=10000)
-    source: Optional[dict] = None
+    patient_summary: str = Field(..., min_length=1, max_length=10000)
+    source: Optional[CaseSourceInput] = None
     service_scope_acknowledged: bool = False
 
 
@@ -106,18 +101,36 @@ class CaseResponse(BaseModel):
     service_code: str
     status: str
     patient_summary: str
-    assigned_physician_id: Optional[str]
+    assigned_physician_id: Optional[str] = None
     version: int
     created_at: str
-    submitted_at: Optional[str]
-    accepted_at: Optional[str]
-    signed_at: Optional[str]
-    delivered_at: Optional[str]
+    submitted_at: Optional[str] = None
+    accepted_at: Optional[str] = None
+    signed_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    has_opinion: bool = False
+
+
+class CaseConversation(CaseResponse):
+    patient_email: Optional[str] = None
+
+
+class CaseSourceResponse(BaseModel):
+    id: str
+    case_id: str
+    category: str
+    declared_provider: Optional[str] = None
+    source_type: Optional[str] = None
+    media_type: Optional[str] = None
+    pasted_text: Optional[str] = None
+    sha256: Optional[str] = None
+    malware_scan_status: str = "PENDING"
+    uploaded_at: str
 
 
 class OpinionCreate(BaseModel):
     assessment_of_ai_output: AssessmentOfAiOutput
-    clinical_assessment: str
+    clinical_assessment: str = Field(..., min_length=1)
     limitations: list[str] = []
     recommendations: list[str] = []
     requires_in_person_assessment: bool = False
@@ -137,8 +150,8 @@ class OpinionResponse(BaseModel):
     clinical_decision_source: str
     status: str
     created_at: str
-    finalized_at: Optional[str]
-    signed_at: Optional[str]
+    finalized_at: Optional[str] = None
+    signed_at: Optional[str] = None
 
 
 class MessageCreate(BaseModel):
@@ -155,18 +168,17 @@ class MessageResponse(BaseModel):
 
 
 class PaymentAuthorize(BaseModel):
-    amount_cents: int = Field(..., gt=0)
+    case_id: str
+    amount_cents: int = Field(default=3900, gt=0)
     currency: str = "EUR"
 
 
 class PaymentResponse(BaseModel):
     id: str
     case_id: str
-    provider_reference: str
     amount_cents: int
     currency: str
     status: str
-    client_secret: str
     created_at: str
 
 
@@ -178,16 +190,14 @@ class UploadSessionResponse(BaseModel):
     status: str
 
 
-class AuditEventResponse(BaseModel):
-    id: str
-    actor_id: str
-    actor_role: str
-    action: str
-    resource_type: str
-    resource_id: Optional[str]
-    case_id: Optional[str]
-    authorization_basis: str
-    request_id: str
-    ip_hash: Optional[str]
-    success: bool
-    occurred_at: str
+class QuestionInput(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+class RequestInformation(BaseModel):
+    questions: list[QuestionInput]
+    reason: str = "CLINICAL_INFORMATION_INSUFFICIENT"
+
+
+class EscalationInput(BaseModel):
+    reason: str = Field(default="CLINICAL_ESCALATION_TRIGGERED", max_length=200)

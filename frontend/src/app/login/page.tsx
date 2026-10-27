@@ -1,46 +1,61 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import axios from 'axios'
+import { useAuth } from '@/components/AuthProvider'
 
 export default function LoginPage() {
+  const { login } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const router = useRouter()
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    setLoading(true)
     try {
-      const res = await axios.post('/api/auth/login', { email, password })
-      localStorage.setItem('token', res.data.token)
-      router.push('/')
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Errore durante l\'accesso')
+      await login(email, password)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Errore durante l\'accesso')
+    } finally {
+      setLoading(false)
     }
   }
 
+  function fill(kind: 'patient' | 'physician') {
+    setEmail(kind === 'patient' ? 'paziente@demo.it' : 'medico@demo.it')
+    setPassword('password123')
+  }
+
   return (
-    <div style={{ maxWidth: '400px', margin: '0 auto' }}>
-      <h1>Accedi</h1>
-      {error && <div style={{ color: 'red', marginBottom: '1rem' }}>{error}</div>}
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} />
+    <div className="card stack" style={{ maxWidth: 420, margin: '0 auto' }}>
+      <h1 style={{ margin: 0 }}>Accedi</h1>
+      {error && <div className="banner-error">{error}</div>}
+      <form onSubmit={submit} className="stack">
+        <div>
+          <label htmlFor="email">Email</label>
+          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} />
+        <div>
+          <label htmlFor="password">Password</label>
+          <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
         </div>
-        <button type="submit" style={{ padding: '0.75rem 1.5rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
-          Accedi
+        <button className="primary" type="submit" disabled={loading}>
+          {loading ? 'Accesso…' : 'Accedi'}
         </button>
       </form>
-      <p style={{ marginTop: '1rem' }}>
-        Non hai un account? <Link href="/register">Registrati</Link>
+      <div className="row">
+        <button type="button" className="secondary" onClick={() => fill('patient')}>
+          Demo paziente
+        </button>
+        <button type="button" className="secondary" onClick={() => fill('physician')}>
+          Demo medico
+        </button>
+      </div>
+      <p className="muted">
+        Non hai un account? <Link href="/register">Registrati come paziente</Link>
       </p>
     </div>
   )

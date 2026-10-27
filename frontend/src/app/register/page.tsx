@@ -1,68 +1,63 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import axios from 'axios'
+import { useAuth } from '@/components/AuthProvider'
 
 export default function RegisterPage() {
+  const { register } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [role, setRole] = useState('PATIENT')
   const [birthDate, setBirthDate] = useState('')
   const [country, setCountry] = useState('ITA')
   const [error, setError] = useState('')
-  const router = useRouter()
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    setLoading(true)
     try {
-      await axios.post('/api/auth/register', { email, password, role, birthDate: birthDate || undefined, country })
-      router.push('/')
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Errore durante la registrazione')
+      await register({ email, password, birth_date: birthDate, country })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Errore durante la registrazione')
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
-    <div style={{ maxWidth: '400px', margin: '0 auto' }}>
-      <h1>Registrati</h1>
-      {error && <div style={{ color: 'red', marginBottom: '1rem' }}>{error}</div>}
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} />
+    <div className="card stack" style={{ maxWidth: 460, margin: '0 auto' }}>
+      <h1 style={{ margin: 0 }}>Registrati come paziente</h1>
+      <p className="muted" style={{ margin: 0 }}>
+        Gli account medici sono creati da clinical operations dopo la verifica dei requisiti
+        professionali. Per provare il flusso medico usa l&apos;account demo.
+      </p>
+      {error && <div className="banner-error">{error}</div>}
+      <form onSubmit={submit} className="stack">
+        <div>
+          <label htmlFor="email">Email</label>
+          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} style={{ width: '100%', padding: '0.5rem' }} />
+        <div>
+          <label htmlFor="password">Password (min. 8 caratteri)</label>
+          <input id="password" type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required />
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Ruolo</label>
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: '100%', padding: '0.5rem' }}>
-            <option value="PATIENT">Paziente</option>
-            <option value="PHYSICIAN">Medico</option>
+        <div>
+          <label htmlFor="birthDate">Data di nascita</label>
+          <input id="birthDate" type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} required />
+        </div>
+        <div>
+          <label htmlFor="country">Paese di residenza</label>
+          <select id="country" value={country} onChange={(e) => setCountry(e.target.value)}>
+            <option value="ITA">Italia</option>
           </select>
         </div>
-        {role === 'PATIENT' && (
-          <>
-            <div style={{ marginBottom: '1rem' }}>
-              <label>Data di nascita</label>
-              <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} />
-            </div>
-            <div style={{ marginBottom: '1rem' }}>
-              <label>Paese</label>
-              <select value={country} onChange={(e) => setCountry(e.target.value)} style={{ width: '100%', padding: '0.5rem' }}>
-                <option value="ITA">Italia</option>
-              </select>
-            </div>
-          </>
-        )}
-        <button type="submit" style={{ padding: '0.75rem 1.5rem', background: '#0066cc', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
-          Registrati
+        <button className="primary" type="submit" disabled={loading}>
+          {loading ? 'Registrazione…' : 'Registrati'}
         </button>
       </form>
-      <p style={{ marginTop: '1rem' }}>
+      <p className="muted">
         Hai già un account? <Link href="/login">Accedi</Link>
       </p>
     </div>

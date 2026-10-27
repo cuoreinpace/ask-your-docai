@@ -1,17 +1,32 @@
-version: '3.9'
-
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ask_docai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ask_docai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ask_docai
+      JWT_SECRET: dev-secret-change-me-please-32-chars-min
+      FRONTEND_URL: http://localhost:3000
+      ENVIRONMENT: development
+      AUDIT_LOG_ENABLED: "true"
     ports:
       - "8080:8080"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/ask_docai
-      - FRONTEND_URL=http://localhost:3000
-      - JWT_SECRET=dev-secret-change-me
-      - NODE_ENV=development
     depends_on:
       db:
         condition: service_healthy
@@ -19,29 +34,14 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      args:
+        API_URL: http://backend:8080
+    environment:
+      API_URL: http://backend:8080
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
     depends_on:
       - backend
-
-  db:
-    image: postgres:16-alpine
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=ask_docai
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
 volumes:
   pgdata:

@@ -7,4 +7,5 @@ dist
 .vscode
 .idea
 coverage
-.nyc_output
+.nyc_output.env.local
+*.tsbuildinfo

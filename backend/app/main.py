@@ -1,13 +1,14 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from contextlib import asynccontextmanager
-import logging
 
 from app.config import settings
-from app.routes import auth, cases, opinions, messages, upload, payments
-from app.core.audit import audit_middleware
+from app.core.audit import AuditMiddleware
+from app.core.database import close_pool, init_pool
 from app.core.error_handler import register_error_handlers
+from app.routes import auth, cases, messages, opinions, payments, upload
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,38 +16,42 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting ask-your-docai backend")
+    await init_pool()
+    logger.info("Database pool ready (%s)", settings.environment)
     yield
-    logger.info("Shutting down ask-your-docai backend")
+    await close_pool()
+    logger.info("Database pool closed")
 
 
 app = FastAPI(
     title="Ask Your DocAI",
-    description="Piattaforma italiana di verifica medica delle ipotesi diagnostiche emerse da ChatGPT",
-    version="0.1.0",
+    description=(
+        "Piattaforma italiana di revisione clinica documentale delle ipotesi "
+        "diagnostiche emerse da ChatGPT. Nessuna AI nel percorso clinico."
+    ),
+    version="0.2.0",
     lifespan=lifespan,
 )
 
+app.add_middleware(AuditMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.frontend_url,
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
-app.middleware("http")(audit_middleware)
 register_error_handlers(app)
 
 app.include_router(auth.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(cases.router, prefix="/v1/cases", tags=["cases"])
-app.include_router(opinions.router, prefix="/v1/clinical", tags=["opinions"])
 app.include_router(messages.router, prefix="/v1/cases", tags=["messages"])
 app.include_router(upload.router, prefix="/v1/cases", tags=["upload"])
+app.include_router(opinions.router, prefix="/v1/clinical", tags=["clinical"])
 app.include_router(payments.router, prefix="/v1/payments", tags=["payments"])
 
 
-@app.get("/health")
-async def health_check():
+@app.get("/health", tags=["ops"])
+async def health() -> dict:
     return {"status": "ok", "timestamp": settings.now_iso()}

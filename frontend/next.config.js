@@ -1,8 +1,10 @@
 /** @type {import('next').NextConfig} */
+const API_URL = process.env.API_URL || 'http://127.0.0.1:8080'
+
 const nextConfig = {
   output: 'standalone',
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080',
+  async rewrites() {
+    return [{ source: '/v1/:path*', destination: `${API_URL}/v1/:path*` }]
   },
 }
 

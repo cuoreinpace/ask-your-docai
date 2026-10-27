@@ -1,92 +1,164 @@
 # Ask Your DocAI
 
-Piattaforma italiana di verifica medica delle ipotesi diagnostiche emerse da ChatGPT.
+Piattaforma italiana di revisione clinica documentale delle ipotesi diagnostiche emerse da
+ChatGPT. Il paziente carica una conversazione già avuta con ChatGPT; un medico abilitato esamina
+il materiale, può chiedere integrazioni e firma un parere indipendente.
 
-## Descrizione
+**Nessuna AI nel percorso clinico.** Il backend non interroga modelli, non riassume, non classifica
+e non assegna priorità. La decisione è umana e firmata.
 
-Ask Your DocAI è una piattaforma sanitaria asincrona che consente ai pazienti di caricare conversazioni ChatGPT e ricevere una valutazione clinica indipendente da un medico. Il medico può concordare, correggere, chiedere informazioni aggiuntive o indicare che sono necessari visita o accertamenti.
+## Stack
 
-## Architettura
+| Componente | Scelta |
+|---|---|
+| Frontend | Next.js 14 (App Router, TypeScript) |
+| Backend | Python 3.12 + FastAPI |
+| Database | PostgreSQL 16 (Cloud SQL in produzione) |
+| Documenti | Object storage + URL firmati (Cloud Storage in produzione) |
+| Auth | JWT HS256 in sviluppo; Google Identity Platform (OIDC + MFA) in produzione |
+| Deploy | Cloud Run `europe-west8` (Milano) + Vercel opzionale |
+| Audit | tabella `audit_events` append-only, senza contenuto clinico |
 
-- **Frontend**: Next.js 14 (React + TypeScript)
-- **Backend**: Python FastAPI
-- **Database**: PostgreSQL (Cloud SQL in produzione)
-- **Storage**: Google Cloud Storage (in produzione)
-- **Auth**: Google Cloud Identity Platform (OIDC + MFA)
-- **Deployment**: Google Cloud Run (backend), Vercel (frontend, opzionale)
-- **CI/CD**: GitHub Actions + Workload Identity Federation
-- **Region**: Europa - Milano (`europe-west8`)
+## Avvio locale
 
-## MVP — Scope
-
-- Upload di conversazioni ChatGPT (PDF, TXT, immagini)
-- Workflow di revisione clinica asincrona
-- Firma elettronica qualificata PAdES
-- Integrazione pagamenti (PSP)
-- Audit trail completo
-- Conformità GDPR e MDR
-
-## Quick Start
+Prerequisiti: Python 3.12+, Node 20+, PostgreSQL in esecuzione.
 
 ```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+# 1. Database
+createdb ask_docai
+psql -d ask_docai -f database/migrations/001_init.sql
 
-# Frontend
+# 2. Backend
+cd backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env            # adatta DATABASE_URL se serve
+.venv/bin/python -m scripts.seed
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+
+# 3. Frontend (seconda shell)
 cd frontend
 npm install
+cp .env.local.example .env.local
 npm run dev
-
-# Database + Docker
-docker-compose up -d db
 ```
 
-## API
+- Frontend: http://localhost:3000
+- API: http://127.0.0.1:8080
+- OpenAPI: http://127.0.0.1:8080/docs
 
-| Metodo | Endpoint | Descrizione |
-|--------|----------|-------------|
-| POST | `/v1/auth/register` | Registrazione utente |
-| POST | `/v1/auth/login` | Accesso |
-| GET | `/v1/auth/me` | Utente corrente |
-| POST | `/v1/cases` | Crea caso |
-| GET | `/v1/cases/:id` | Leggi caso |
-| POST | `/v1/cases/:id/submit` | Invia caso |
-| POST | `/v1/cases/:id/upload` | Inizializza upload |
-| POST | `/v1/cases/:id/upload/:uploadId/complete` | Completa upload |
-| POST | `/v1/cases/:id/messages` | Invia messaggio |
-| GET | `/v1/cases/:id/messages` | Leggi messaggi |
-| POST | `/v1/clinical/cases/:id/opinions` | Crea parere |
-| PUT | `/v1/clinical/opinions/:id` | Aggiorna parere |
-| POST | `/v1/clinical/opinions/:id/finalize` | Finalizza parere |
-| POST | `/v1/clinical/opinions/:id/sign` | Firma parere |
-| GET | `/v1/clinical/cases/:id/opinion` | Leggi parere |
-| GET | `/v1/opinions/:id/document` | Scarica documento firmato |
-| POST | `/v1/payments/authorization` | Preautorizza pagamento |
-| POST | `/v1/payments/webhooks/payment-provider` | Webhook PSP |
+### Account demo (creati da `scripts.seed`)
 
-## Deployment
+| Ruolo | Email | Password |
+|---|---|---|
+| Paziente | `paziente@demo.it` | `password123` |
+| Medico (identità STRONG) | `medico@demo.it` | `password123` |
 
-### Google Cloud (raccomandato)
+Il medico demo ha `identity_level = STRONG` perché la firma del parere richiede
+autenticazione forte. La registrazione pubblica crea solo account paziente: gli account medici
+sono provisionati da clinical operations dopo il credentialing.
+
+## Flusso funzionale
+
+1. Il paziente descrive il problema, incolla la conversazione o carica un file, accetta lo scope
+   del servizio e invia il caso (`DRAFT → SUBMITTED`).
+2. Il medico prende in carico il caso dalla coda (`SUBMITTED → IN_REVIEW`), creando
+   l'assegnazione.
+3. Il medico può chiedere integrazioni (`NEEDS_INFORMATION`), fare escalation
+   (`CLINICAL_ESCALATION`) o redigere il parere (`OPINION_DRAFT`).
+4. Il parere viene finalizzato (versione immutabile con hash) e firmato
+   (`FINALIZED → SIGNED`); il caso passa a `SIGNED`.
+5. Il paziente vede il parere firmato e può scaricare il documento.
+
+Esiti ammessi per il parere: concorda, concorda parzialmente, non concorda, informazioni
+insufficienti, non valutabile a distanza. Il medico assegna manualmente l'urgenza; il backend non
+la calcola.
+
+## API principali
+
+| Metodo | Endpoint | Ruolo |
+|---|---|---|
+| POST | `/v1/auth/register` | pubblico (solo paziente) |
+| POST | `/v1/auth/login` | pubblico |
+| GET | `/v1/auth/me` | autenticato |
+| GET | `/v1/cases` | paziente / medico / admin |
+| POST | `/v1/cases` | paziente |
+| GET | `/v1/cases/{id}` | proprietario o medico assegnato |
+| POST | `/v1/cases/{id}/submit` | paziente |
+| GET | `/v1/cases/{id}/sources` | proprietario o medico assegnato |
+| POST | `/v1/cases/{id}/uploads` | paziente |
+| POST | `/v1/cases/{id}/uploads/{uploadId}/complete` | paziente |
+| POST/GET | `/v1/cases/{id}/messages` | proprietario o medico assegnato |
+| POST | `/v1/clinical/cases/{id}/accept` | medico |
+| POST | `/v1/clinical/cases/{id}/request-information` | medico assegnato |
+| POST | `/v1/clinical/cases/{id}/escalate` | medico assegnato |
+| POST | `/v1/clinical/cases/{id}/opinions` | medico assegnato |
+| PUT | `/v1/clinical/opinions/{id}` | medico autore (solo DRAFT) |
+| POST | `/v1/clinical/opinions/{id}/finalize` | medico autore |
+| POST | `/v1/clinical/opinions/{id}/sign` | medico autore + strong auth |
+| GET | `/v1/clinical/cases/{id}/opinion` | proprietario o medico assegnato |
+| GET | `/v1/clinical/opinions/{id}/document` | proprietario o medico assegnato |
+| POST | `/v1/payments/authorization` | paziente |
+| POST | `/v1/payments/webhooks/payment-provider` | PSP |
+
+Tutte le route sensibili scrivono un evento in `audit_events` (actor, azione, risorsa, esito) senza
+contenuto clinico.
+
+## Sicurezza e privacy
+
+- Autorizzazione per oggetto: un medico vede solo i casi assegnati.
+- Firma del parere: richiede `identity_level = STRONG`; in produzione il documento è firmato PAdES
+  tramite QTSP e il backend non custodisce chiavi private.
+- Nessun dato clinico in URL, log applicativi, email o metadati dei pagamenti.
+- Upload: controlli di dimensione, MIME ed hash SHA-256; in produzione URL firmati verso object
+  storage con quarantena e malware scan.
+- Retention e DPIA sono fuori dal perimetro del codice e devono essere definite prima del go-live.
+
+## Test rapido con curl
 
 ```bash
-# Backend su Cloud Run
-gcloud run deploy ask-your-docai-backend \
-  --region europe-west8 \
-  --source ./backend \
-  --set-env-vars DATABASE_URL=postgresql://...
+# Login paziente
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"paziente@demo.it","password":"password123"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
 
-# Frontend su Vercel (opzionale)
-vercel deploy
+# Crea e invia un caso
+CASE=$(curl -s -X POST http://127.0.0.1:8080/v1/cases \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"patient_summary":"Cefalea da 3 giorni","service_scope_acknowledged":true}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+curl -s -X POST http://127.0.0.1:8080/v1/cases/$CASE/submit -H "Authorization: Bearer $TOKEN"
 ```
 
-### Docker Compose (sviluppo locale)
+## Docker Compose
 
 ```bash
-docker-compose up -d
+docker compose up --build
 ```
 
-## Licenza
+Compose avvia PostgreSQL (con migrazione automatica), il backend su `:8080` e il frontend su
+`:3000`. Il proxy `/v1/*` del frontend punta al servizio `backend` nella rete Compose.
 
-Proprietario — Tutti i diritti riservati.
+## Struttura
+
+```
+backend/
+  app/
+    main.py            entrypoint FastAPI
+    config/            settings (pydantic-settings)
+    core/              database pool, deps, audit, error handler
+    routes/            auth, cases, messages, upload, opinions, payments
+    schemas/           modelli Pydantic
+  scripts/seed.py      account demo
+frontend/
+  src/app/             route Next.js (App Router)
+  src/components/      AuthProvider, NavBar, RequireAuth
+  src/lib/api.ts       client API + sessione
+database/migrations/   schema SQL
+```
+
+## Limiti noti dell'MVP
+
+- Firma qualificata e pagamenti sono simulati (nessun QTSP/PSP reale collegato).
+- Upload locale: in produzione va sostituito con URL firmati verso Cloud Storage.
+- MFA/Identity Platform, DPIA, autorizzazione regionale e pen-test sono gate esterni al codice.
